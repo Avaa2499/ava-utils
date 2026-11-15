@@ -1,0 +1,28 @@
+# TODO (in priority order)
+
+Work through this top down. Give each entry a score out of 10 for how urgently it needs doing.
+
+Scoring:
+10: Critical vulnerability (e.g. remote code execution possibility)
+9: A working feature breaks
+8:
+7:
+6: Bugfix to existing code
+5: Performance optimisation
+4:
+3:
+2: New feature
+1:
+
+----
+
+1:
+2:
+3:
+
+
+# Open questions
+
+Answer on the "> " line. Blank = not accepted. Answered ones move to README.md.
+
+(none open right now)
