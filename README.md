@@ -81,6 +81,9 @@ Every module follows these. No exceptions, ever.
 - A module that only listens (e.g. the indexer) starts when something calls it, or when you start it by hand. On startup it subscribes to what it listens to, which starts those modules. Events it missed while stopped are covered by the current state each producer sends on connect.
 - Nothing starts at login, and nothing runs while you're logged out.
 - Once started, a module keeps running until you log out or shut down.
+- Verified by a spike (systemd 259): the first connection starts the service; `kill -9` and `abort()` both bring it back within 2s (`Restart=always`); a client that connects while it restarts is queued by the socket and answered by the new process. A client connected at the moment of the crash gets a dropped connection and must retry.
+- A crashed module restarts on its own, without waiting for a new connection. "Nothing starts until something connects" applies to the first start only.
+- The module gets its socket from systemd as fd 3 (`LISTEN_FDS`), so it never binds or creates the socket itself.
 
 ## Module storage
 
