@@ -63,6 +63,7 @@ Every module follows these. No exceptions, ever.
 - Modules find each other by reading the manifests: find which module answers or sends a message, then connect to that module's socket.
 - Install refuses a module with a missing manifest, or whose messages don't match it.
 - Stored in `~/.config/ava-utils/`.
+- It also lists the module's CLI commands (name + one-line help), so `ava-utils help` and tab completion work without starting the module.
 
 ## Cycles
 
@@ -93,6 +94,7 @@ Every module follows these. No exceptions, ever.
 - One command for everything: install, remove, cycle check, and using modules as `ava-utils <module-suffix> <arguments>`.
 - It exits when done, so nothing depends on it running.
 - Reading command-line flags lives in `ava-utils-config`, not in a module.
+- `ava-utils <module> <args>`: the CLI sends the raw arguments to the module in one standard "run this command" message. The module parses them (with the flag code in `ava-utils-config`) and replies with text to print. The CLI knows nothing about any specific module's arguments.
 - Updating a module replaces it and restarts only that module. Everything else keeps running.
 - Removing a module: anything using it follows standard 2's retry rules and carries on doing what it can.
 
@@ -125,6 +127,13 @@ All directives verified present in systemd 259 on this machine.
 - Commit after every small change, with a clear message. Never batch changes.
 - **HARD RULE: push to GitHub (`origin`) after every commit.** Never leave commits only local. Parallel subagents work from what is on GitHub. Pull with rebase before pushing; if a push is rejected, rebase and push again.
 - Never leave branches open long. Keep them short-lived: merge to `main` quickly, then delete the branch.
+
+## Build and workflow
+
+- Subagents use Haiku by default. If something breaks later, revisit it with Sonnet.
+- Linker: mold, set in `~/.cargo/config.toml` (user level, so every worktree and subagent gets it).
+- Compiler cache: sccache (the Rust equivalent of ccache), also user level. Each parallel subagent builds in its own worktree, and sccache shares the compiled dependencies between them.
+- Tasks: a `justfile` with `check`, `test`, `clippy` and `fmt`, added when the Cargo workspace is created.
 
 ## Traps
 
