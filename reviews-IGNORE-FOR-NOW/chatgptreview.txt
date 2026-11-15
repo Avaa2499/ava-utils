@@ -1,0 +1,207 @@
+Overall, this is a **good architectural direction**. The process isolation, peer-to-peer communication and lack of a central broker are consistent with your goal of building a suite where individual failures remain contained.
+
+However, there are a few places where the README promises stronger guarantees than the architecture currently provides. I'd resolve these before implementing the foundation.
+
+## **What's particularly good**
+
+1. **One process per module.** This is a meaningful isolation boundary. A segmentation fault in a codec library, for example, shouldn't take down your file indexer.
+2. **No central broker.** Removing a permanently running coordinator avoids creating another service that everything depends on.
+3. **Manifest-based routing.** Keeping module names out of implementation code is a good way to decouple module identity from functionality.
+4. **Library + executable separation.** You can test the actual functionality without starting a service or establishing socket connections.
+5. **Systemd socket activation.** It gives you lifecycle management without needing to build your own service supervisor.
+6. **Explicit fault handling.** Request IDs, idempotency, persistent state and bounded queues are all sensible foundations.
+
+The overall concept is sound.
+
+## **Things I'd reconsider**
+
+### **1. Runtime dependencies still exist**
+
+This is the biggest conceptual distinction.
+
+You say:
+
+> No module depends on another module.
+
+But your file-searcher depends on file-indexer to answer searches.
+
+You have removed compile-time dependencies, not runtime dependencies.
+
+That's perfectly reasonable, but I'd explicitly distinguish between them:
+
+- Compile-time independence: no module needs another module's code or binaries.
+- Runtime independence: a module can start, operate and fail without requiring other modules.
+- Functional independence: a module can still provide its full functionality when another module is unavailable.
+
+Your architecture achieves the first, partially achieves the second, and doesn't necessarily achieve the third.
+
+That's not a flaw in itself. Just don't confuse fault containment with guaranteed availability.
+
+### **2. Your event recovery mechanism needs more thought**
+
+You state:
+
+> When a subscriber connects, the producer immediately sends the topic's current state.
+
+This works for state-based topics.
+
+It doesn't necessarily work for event streams.
+
+Consider `files-changed`:
+
+1. The file-watcher reports a file modification.
+2. The file-indexer crashes.
+3. The file changes again while the indexer is unavailable.
+4. The indexer restarts and reconnects.
+
+What exactly does the watcher send?
+
+Its current state might contain the configured watch roots, but that doesn't tell the indexer which filesystem changes it missed.
+
+I'd distinguish two types of topics:
+
+| Type         | Recovery                                                 |
+| ------------ | -------------------------------------------------------- |
+| State topics | Send a complete snapshot when subscribing                |
+| Event topics | Replay from a sequence number, or trigger reconciliation |
+
+For your file-indexer specifically, I'd make filesystem reconciliation part of its recovery procedure. File-watcher events should be treated as updates, not as the only source of truth.
+
+There's also a race worth addressing: how do you guarantee that events occurring while a snapshot is being sent aren't lost?
+
+### **3. Your retry policy contradicts live replacement**
+
+Your retry policy:
+
+- 2 seconds
+- 4 seconds
+- 8 seconds
+- Continue doubling
+- After two minutes, retry every five minutes
+
+Imagine replacing a module while the rest of the suite is running.
+
+A subscriber could take another five minutes to reconnect, despite the replacement being ready almost immediately.
+
+I'd separate **error reporting** from **retry scheduling**.
+
+A module can report a persistent failure after two minutes while continuing to retry at a reasonable maximum interval.
+
+I'd also introduce jitter to avoid every subscriber reconnecting simultaneously.
+
+### **4. The protocol needs version compatibility rules**
+
+`ava-utils-config` is a sensible shared crate, but there's an important complication.
+
+You want to update individual modules without rebuilding everything else.
+
+However, all your message definitions live in one shared crate.
+
+What happens when you update a message definition and install only one module?
+
+For example:
+
+- file-indexer is built against protocol version A.
+- file-searcher is built against protocol version B.
+- Version B introduces a new required field.
+
+The fact that messages carry named boxes doesn't automatically guarantee compatibility.
+
+I'd establish these rules:
+
+- Adding optional fields is backward-compatible.
+- Unknown optional fields must be ignored.
+- Removing or renaming fields requires an explicit compatibility decision.
+- Incompatible message changes require version negotiation or a coordinated upgrade.
+
+You don't necessarily need a complicated versioning system. You do need a defined compatibility contract.
+
+### **5. Your long-job cancellation guarantees are too strong**
+
+You specify:
+
+> Force cancel: the job stops instantly.
+
+That isn't something you can guarantee for arbitrary Rust tasks.
+
+A Tokio task can be aborted, but blocking operations and external C libraries might not cooperate with cancellation.
+
+And because you have one process per module, killing the entire process to terminate one job would also kill other jobs.
+
+I'd define cancellation semantics more carefully:
+
+- **Cooperative cancellation:** The job checks for cancellation and stops at a safe point.
+- **Forced cancellation:** The job is terminated using an independently killable execution boundary.
+- **Resumable cancellation:** The job checkpoints its state before stopping.
+
+Resumability also needs to be implemented by each job type. It isn't something the messaging architecture can provide automatically.
+
+### **6. Watchdog behaviour needs a distinction**
+
+`WatchdogSec=` doesn't automatically detect every hung operation.
+
+For example, a module could have a request handler deadlocked while its main Tokio runtime continues operating and sending watchdog notifications.
+
+The service would appear healthy to systemd.
+
+I'd distinguish:
+
+- Process health.
+- Request deadlines.
+- Individual job health.
+
+Your five-second deadline is useful, but a timeout means the operation didn't respond in time. It doesn't prove the entire module is dead.
+
+## **A few smaller observations**
+
+`ava-utils-config`**&#x20;is doing quite a lot.**
+
+Transport, serialization, message definitions, retries, flag parsing and file-location messages are all being placed there.
+
+I'd keep an eye on this. It should be shared infrastructure, not the place where unrelated functionality accumulates.
+
+**The filesystem is still a dependency.**
+
+That's fine, especially since you explicitly accept it as part of the platform foundation. However, filesystem corruption, storage exhaustion and permission failures can affect multiple modules simultaneously.
+
+**Your module naming philosophy is sensible, but don't over-fragment.**
+
+A module should represent a coherent responsibility, not necessarily every individual operation. Your examples are reasonably bounded.
+
+## **The first three modules**
+
+Your initial dependency graph is correct:
+
+**CLI**
+
+File-watcher
+
+File-indexer
+
+File-searcher
+
+Logical dependencies, not physical layout.
+
+Watcher → Indexer
+
+Searcher → Indexer
+
+I particularly like your decision to let the indexer own its index and the watcher own its watch roots. That gives each module a clear responsibility without creating a circular dependency.
+
+The main thing I'd test is recovery: kill the indexer, make filesystem changes, restart it, and verify that its index becomes correct without relying on events it missed.
+
+## **Verdict**
+
+I'd continue with this architecture. I wouldn't start implementing every detail yet, though.
+
+The foundational decisions are good. The areas that need more precise definitions are:
+
+1. State recovery versus event recovery.
+2. Runtime dependency failure semantics.
+3. Protocol compatibility during independent updates.
+4. Job cancellation and durability.
+5. Retry and health-check behaviour.
+
+**One particularly important recommendation:** don't freeze `ava-utils-config` or the messaging protocol until you've actually implemented the first three modules and tested them against crashes, restarts, missed events and incompatible message versions.
+
+The architecture should earn its guarantees through those tests, rather than simply documenting them.
