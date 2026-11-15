@@ -40,11 +40,7 @@ Scoring:
 
 Answer on the "> " line. Blank = not accepted. Answered ones move to README.md.
 
-1. Naming rule for module-to-module messages. A message is named for the job it does, never for the module that answers it. Lowercase, hyphenated, verb or noun that reads naturally (`files-changed`, `file-lookup`). Two modules that answer the same message name is a design mistake you catch by eye; install does not check it.
-   Accept?
->
-
-2. Module and crate names. Short names like `searcher` stop working once a web search module exists, so the first three say what they work on:
+1. Module and crate names. Short names like `searcher` stop working once a web search module exists, so the first three say what they work on:
    - `ava-utils-file-indexer`
    - `ava-utils-file-searcher`
    - `ava-utils-file-watcher`
@@ -52,18 +48,8 @@ Answer on the "> " line. Blank = not accepted. Answered ones move to README.md.
    - `ava-utils-config`, `ava-utils-codecs` (already in the README)
    The CLI would then be `ava-utils file-searcher find "*.rs"`.
    Accept, or give your own names?
->
+> 
 
-3. Names of the two messages between modules (no one else needs a name yet).
-   - Topic: `files-changed` (watcher sends, indexer listens).
-   - Call: `file-lookup` (searcher asks, indexer answers). Not `index-lookup`, because that names how it works, not what it gives you.
+2. Names of the standard messages every module answers: `run-command`, `job-progress`, `job-cancel`.
    Accept?
->
-
-4. Names of the standard messages every module answers: `run-command`, `job-progress`, `job-cancel`.
-   Accept?
->
-
-5. The README table also lists `index-scan`, `search` and `watch-set-roots` as separate messages. Nothing but the CLI would ever call them, and the CLI already uses `run-command` (`ava-utils file-indexer scan ~/Projects`). Drop all three, keeping only `run-command`?
-   Accept?
->
+> 
