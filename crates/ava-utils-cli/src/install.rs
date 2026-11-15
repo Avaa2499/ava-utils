@@ -11,6 +11,8 @@ use crate::loops;
 use crate::systemd::{self, Runner};
 use crate::units;
 
+pub const RESERVED: [&str; 4] = ["install", "remove", "check", "help"];
+
 pub const CRASH_RECOVERY_LIMIT: Duration = Duration::from_secs(15);
 
 pub struct Layout {
@@ -97,6 +99,12 @@ fn unlink(path: &Path) {
 
 pub fn install(layout: &Layout, sys: &impl Runner, probe: &impl Probe, src: &Source) -> Result<()> {
     check_module_name(&src.module)?;
+    if RESERVED.contains(&src.module.as_str()) {
+        return Err(Error::Usage(format!(
+            "{} is a built-in au command, pick another module name",
+            src.module
+        )));
+    }
     let manifest = Manifest::parse(&std::fs::read_to_string(&src.manifest)?)?;
     if manifest.module != src.module {
         return Err(Error::Usage(format!(
@@ -332,6 +340,14 @@ mod tests {
         assert!(e.to_string().contains("loop"), "{e}");
         assert!(sys.calls.borrow().is_empty());
         assert!(!sb.layout().binary("a").exists());
+    }
+
+    #[test]
+    fn built_in_command_names_cannot_be_modules() {
+        let sb = Sandbox::new("reserved");
+        let src = sb.source("install", &manifest("install", ""));
+        let e = install(&sb.layout(), &Recorder::default(), &AlwaysUp, &src).unwrap_err();
+        assert!(e.to_string().contains("built-in"), "{e}");
     }
 
     #[test]
