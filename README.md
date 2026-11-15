@@ -182,7 +182,7 @@ Decisions behind it:
 - The file-watcher owns its list of roots (set by the cli), so the file-indexer never calls the file-watcher. That would be a loop (file-watcher → file-indexer events, file-indexer → file-watcher call).
 - The file-indexer applies exclusion rules to what the file-watcher reports, so the file-watcher watches everything under its roots.
 - No `index-changed` topic yet: nothing listens to it. Add it when something does.
-- `run-command`, `job-progress` and `job-cancel` are standard messages every module answers. The CLI picks the module by name, so they never clash.
+- `run-command`, `job-progress` and `job-cancel` are the standard messages every module answers (accepted names). The CLI picks the module by name, so they never clash.
 
 
 TODO MODULES:
