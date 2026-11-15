@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use ava_utils_config::error::{Error, Result};
@@ -70,16 +71,22 @@ pub fn ext_of(path: &str) -> String {
     }
 }
 
-fn name_key(path: &str) -> String {
+pub(crate) fn name_key(path: &str) -> String {
     format!("{}\0{path}", name_of(path).to_lowercase())
 }
 
-fn ext_key(path: &str) -> String {
+pub(crate) fn ext_key(path: &str) -> String {
     format!("{}\0{}\0{path}", ext_of(path), name_of(path).to_lowercase())
 }
 
 fn after_prefix(dir: &str) -> (String, String) {
     (format!("{dir}/"), format!("{dir}0"))
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Finalized {
+    pub stale_removed: u64,
+    pub folders: u64,
 }
 
 pub struct Index {
@@ -219,6 +226,82 @@ impl Index {
             out.push((k.value().to_string(), v.value().to_vec()));
         }
         Ok(out)
+    }
+
+    pub fn finalize_scan(&self, roots: &[String], generation: u64) -> Result<Finalized> {
+        let under = |p: &str| {
+            roots.iter().any(|r| {
+                p == r
+                    || p.strip_prefix(r.as_str())
+                        .is_some_and(|x| x.starts_with('/'))
+            })
+        };
+        let mut stale: Vec<(String, bool)> = Vec::new();
+        let mut sizes: HashMap<String, u64> = HashMap::new();
+        let mut seen_inodes: HashSet<u64> = HashSet::new();
+        {
+            let r = self.db.begin_read().map_err(db_err)?;
+            let files = r.open_table(FILES).map_err(db_err)?;
+            for row in files.iter().map_err(db_err)? {
+                let (k, v) = row.map_err(db_err)?;
+                let path = k.value();
+                let Some(rec) = Record::from_bytes(v.value()) else {
+                    continue;
+                };
+                if rec.generation < generation && under(path) {
+                    stale.push((path.to_string(), rec.is_dir));
+                    continue;
+                }
+                if rec.is_dir {
+                    sizes.entry(path.to_string()).or_insert(0);
+                } else if seen_inodes.insert(rec.inode) {
+                    let mut dir = path;
+                    while let Some(i) = dir.rfind('/') {
+                        dir = &dir[..i];
+                        if dir.is_empty() {
+                            break;
+                        }
+                        match sizes.get_mut(dir) {
+                            Some(total) => *total += rec.size,
+                            None => {
+                                sizes.insert(dir.to_string(), rec.size);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let w = self.db.begin_write().map_err(db_err)?;
+        {
+            let mut files = w.open_table(FILES).map_err(db_err)?;
+            let mut names = w.open_table(NAME_PATH).map_err(db_err)?;
+            let mut exts = w.open_table(EXT_NAME).map_err(db_err)?;
+            for (p, is_dir) in &stale {
+                files.remove(p.as_str()).map_err(db_err)?;
+                names.remove(name_key(p).as_str()).map_err(db_err)?;
+                if !is_dir {
+                    exts.remove(ext_key(p).as_str()).map_err(db_err)?;
+                }
+            }
+        }
+        w.delete_table(FOLDER_SIZES).map_err(db_err)?;
+        {
+            let mut table = w.open_table(FOLDER_SIZES).map_err(db_err)?;
+            for (dir, size) in &sizes {
+                table.insert(dir.as_str(), *size).map_err(db_err)?;
+            }
+        }
+        w.commit().map_err(db_err)?;
+        Ok(Finalized {
+            stale_removed: stale.len() as u64,
+            folders: sizes.len() as u64,
+        })
+    }
+
+    pub fn folder_size(&self, dir: &str) -> Result<Option<u64>> {
+        let r = self.db.begin_read().map_err(db_err)?;
+        let t = r.open_table(FOLDER_SIZES).map_err(db_err)?;
+        Ok(t.get(dir).map_err(db_err)?.map(|g| g.value()))
     }
 
     pub fn get(&self, path: &str) -> Result<Option<Record>> {
@@ -417,6 +500,42 @@ mod tests {
         assert_eq!(ix.count().unwrap(), 1);
         ix.clear_frontier("j1").unwrap();
         assert!(ix.frontier("j1").unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn rec(path: &str, size: u64, is_dir: bool, inode: u64, generation: u64) -> Entry {
+        Entry {
+            path: path.to_string(),
+            record: Record {
+                size,
+                mtime: 1,
+                inode,
+                is_dir,
+                generation,
+            },
+        }
+    }
+
+    #[test]
+    fn finalize_drops_stale_records_and_sizes_folders_without_double_counting_hardlinks() {
+        let (dir, ix) = temp_index("finalize");
+        ix.upsert(&[
+            rec("/r", 0, true, 1, 1),
+            rec("/r/a.txt", 10, false, 2, 1),
+            rec("/r/sub", 0, true, 3, 1),
+            rec("/r/sub/b.txt", 5, false, 4, 1),
+            rec("/r/sub/link.txt", 5, false, 4, 1),
+            rec("/r/old.txt", 100, false, 5, 0),
+            rec("/elsewhere/keep.txt", 7, false, 6, 0),
+        ])
+        .unwrap();
+        let f = ix.finalize_scan(&["/r".to_string()], 1).unwrap();
+        assert_eq!(f.stale_removed, 1);
+        assert_eq!(ix.get("/r/old.txt").unwrap(), None);
+        assert!(ix.get("/elsewhere/keep.txt").unwrap().is_some());
+        assert_eq!(ix.folder_size("/r").unwrap(), Some(15));
+        assert_eq!(ix.folder_size("/r/sub").unwrap(), Some(5));
+        assert_eq!(ix.folder_size("/nope").unwrap(), None);
         let _ = std::fs::remove_dir_all(dir);
     }
 
