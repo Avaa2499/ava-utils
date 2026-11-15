@@ -2,7 +2,7 @@
 
 A growing suite of small, independent Rust modules, optimised around the user's Linux machine. Each module does one bounded job and publishes its own inputs and outputs. Modules work together through shared topics and calls, never through direct dependencies. New things get their own module, never tacked onto an existing one. The suite is designed to grow indefinitely.
 
-**Status:** building. `ava-utils-config` is done. Next: the `au` CLI.
+**Status:** building. `ava-utils-config` and the `au` CLI are done. Next: the file indexer.
 
 ## Locked decisions
 
@@ -97,6 +97,7 @@ Every module follows these. No exceptions, ever.
 - One command for everything: install, remove, cycle check, and using modules as `au <module-suffix> <arguments>`.
 - It exits when done, so nothing depends on it running.
 - Reading command-line flags lives in `ava-utils-config`, not in a module.
+- Every module answers `run-command` with no arguments by replying with a short "I'm up" text. Install uses this to start the module for the crash test.
 - `au <module> <args>`: the CLI sends the raw arguments to the module in one standard "run this command" message. The module parses them (with the flag code in `ava-utils-config`) and replies with text to print. The CLI knows nothing about any specific module's arguments.
 - Updating a module replaces it and restarts only that module. Everything else keeps running.
 - Removing a module: anything using it follows standard 2's retry rules and carries on doing what it can.
