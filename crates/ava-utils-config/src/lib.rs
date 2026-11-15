@@ -1,6 +1,7 @@
 pub mod client;
 pub mod envelope;
 pub mod error;
+pub mod flags;
 pub mod frame;
 pub mod id;
 pub mod paths;

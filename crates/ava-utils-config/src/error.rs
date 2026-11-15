@@ -7,6 +7,7 @@ pub enum Error {
     Timeout,
     Remote { code: String, message: String },
     Protocol(String),
+    Usage(String),
     Io(io::Error),
 }
 
@@ -19,6 +20,7 @@ impl fmt::Display for Error {
             Error::Timeout => write!(f, "no reply within the deadline"),
             Error::Remote { code, message } => write!(f, "{code}: {message}"),
             Error::Protocol(m) => write!(f, "protocol error: {m}"),
+            Error::Usage(m) => write!(f, "usage: {m}"),
             Error::Io(e) => write!(f, "io error: {e}"),
         }
     }
