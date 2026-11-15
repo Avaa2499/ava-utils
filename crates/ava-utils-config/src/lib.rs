@@ -4,6 +4,7 @@ pub mod error;
 pub mod flags;
 pub mod frame;
 pub mod id;
+pub mod manifest;
 pub mod paths;
 pub mod server;
 #[cfg(test)]
