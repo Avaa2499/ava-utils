@@ -47,7 +47,7 @@ Every module follows these. No exceptions, ever.
 - Topic and call names: no fixed scheme, named to fit what they are.
 - Messages are binary, encoded with MessagePack. It's hidden inside `ava-utils-config`, so it can be swapped for our own format later without touching any module. Each message carries its box names, not just the values, so updating one module never breaks the others. The `ava-utils` CLI is the parser: it shows messages as readable text, with a flag to show the raw binary instead.
 - Codecs: `ava-utils-codecs` is a shared crate, not a module. It uses the codec libraries already installed on the system (libavcodec, libdav1d, libvpx, libopus), so the heavy code exists once. Video playback, audio playback and convert-file (e.g. .mkv → .mp4) build it in.
-- Never two modules doing the same thing. Install refuses a module that sends or answers something another module already does.
+- Never two modules doing the same thing. This is a design rule, not an install check. Install only checks loops, manifests and tests.
 
 ## Long jobs
 
@@ -182,7 +182,7 @@ Decisions behind it:
 - The watcher owns its list of roots (set by the cli), so the indexer never calls the watcher. That would be a loop (watcher → indexer events, indexer → watcher call).
 - The indexer applies exclusion rules to what the watcher reports, so the watcher watches everything under its roots.
 - No `index-changed` topic yet: nothing listens to it. Add it when something does.
-- Open: `run-command`, `job-progress` and `job-cancel` are standard messages every module answers. "Install refuses a module that answers something another module already does" would refuse the second module, so standard messages need to be exempt from that check.
+- `run-command`, `job-progress` and `job-cancel` are standard messages every module answers. The CLI picks the module by name, so they never clash.
 
 
 TODO MODULES:
