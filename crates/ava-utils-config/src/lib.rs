@@ -6,3 +6,4 @@ pub mod id;
 pub mod paths;
 #[cfg(test)]
 mod testutil;
+pub mod topic;
