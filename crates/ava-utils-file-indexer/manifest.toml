@@ -7,7 +7,7 @@ module = "file-watcher"
 
 [[commands]]
 name = "scan"
-help = "Scan folders into the index (default: $HOME); starts a job"
+help = "Scan folders into the index: scan <folder>...; starts a job"
 
 [[commands]]
 name = "status"

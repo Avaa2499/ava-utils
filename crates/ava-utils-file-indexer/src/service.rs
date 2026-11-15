@@ -16,7 +16,6 @@ use crate::jobs::Jobs;
 pub struct Service {
     pub index: Arc<Index>,
     pub jobs: Jobs,
-    home: String,
 }
 
 fn usage(s: &str) -> Error {
@@ -24,7 +23,7 @@ fn usage(s: &str) -> Error {
 }
 
 impl Service {
-    pub fn open(db_path: &Path, home: &str, workers: usize) -> Result<Self> {
+    pub fn open(db_path: &Path, workers: usize) -> Result<Self> {
         let index = Arc::new(Index::open(db_path)?);
         if index.exclusions()?.is_empty() {
             for p in DEFAULT_EXCLUSIONS {
@@ -32,11 +31,7 @@ impl Service {
             }
         }
         let jobs = Jobs::new(index.clone(), workers)?;
-        Ok(Self {
-            index,
-            jobs,
-            home: home.to_string(),
-        })
+        Ok(Self { index, jobs })
     }
 
     pub fn run_command(&self, args: &[String]) -> Result<CommandOutput> {
@@ -50,12 +45,10 @@ impl Service {
         let rest = &args[1..];
         match cmd.as_str() {
             "scan" => {
-                let roots = if rest.is_empty() {
-                    vec![self.home.clone()]
-                } else {
-                    rest.to_vec()
-                };
-                let id = self.jobs.start_scan(roots)?;
+                if rest.is_empty() {
+                    return Err(usage("usage: scan <folder>..."));
+                }
+                let id = self.jobs.start_scan(rest.to_vec())?;
                 Ok(CommandOutput {
                     text: format!("scan started, job {id}"),
                     job: Some(id),
@@ -168,7 +161,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::write(root.join("sub/a.txt"), b"hi").unwrap();
-        let s = Service::open(&dir.join("index.redb"), &root.to_string_lossy(), 2).unwrap();
+        let s = Service::open(&dir.join("index.redb"), 2).unwrap();
         (dir, s, root)
     }
 
@@ -192,7 +185,7 @@ mod tests {
         s.run_command(&a(&["exclude", "remove", "node_modules/"]))
             .unwrap();
         drop(s);
-        let s = Service::open(&dir.join("index.redb"), "/", 1).unwrap();
+        let s = Service::open(&dir.join("index.redb"), 1).unwrap();
         assert!(
             s.index
                 .exclusions()
@@ -204,9 +197,12 @@ mod tests {
     }
 
     #[test]
-    fn scan_defaults_to_home_and_progress_reports_it() {
+    fn scan_needs_a_folder_and_progress_reports_it() {
         let (dir, s, root) = svc("svc-scan");
-        let out = s.run_command(&a(&["scan"])).unwrap();
+        assert!(matches!(s.run_command(&a(&["scan"])), Err(Error::Usage(_))));
+        let out = s
+            .run_command(&a(&["scan", &root.to_string_lossy()]))
+            .unwrap();
         let id = out.job.unwrap();
         let t = Instant::now();
         loop {

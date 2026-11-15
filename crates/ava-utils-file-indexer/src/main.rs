@@ -105,13 +105,11 @@ fn main() {
     let dirs = Dirs::from_env().unwrap_or_else(|e| fail(&e));
     let state = dirs.state(MODULE).unwrap_or_else(|e| fail(&e));
     std::fs::create_dir_all(&state).unwrap_or_else(|e| fail(&e));
-    let home = std::env::var("HOME").unwrap_or_else(|e| fail(&e));
     let workers = thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
-    let service = Arc::new(
-        Service::open(&state.join("index.redb"), &home, workers).unwrap_or_else(|e| fail(&e)),
-    );
+    let service =
+        Arc::new(Service::open(&state.join("index.redb"), workers).unwrap_or_else(|e| fail(&e)));
     let listener = Listener::from_systemd().unwrap_or_else(|e| fail(&e));
     eprintln!("{MODULE}: up, pid {}", std::process::id());
     {
