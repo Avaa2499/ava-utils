@@ -11,6 +11,7 @@ Description=ava-utils %i socket
 [Socket]
 ListenStream=%t/ava-utils/%i.sock
 TriggerLimitBurst=0
+RemoveOnStop=yes
 
 [Install]
 WantedBy=sockets.target
@@ -90,5 +91,6 @@ mod tests {
             assert!(SERVICE_TEMPLATE.contains(s), "{s}");
         }
         assert!(SOCKET_TEMPLATE.contains("TriggerLimitBurst=0"));
+        assert!(SOCKET_TEMPLATE.contains("RemoveOnStop=yes"));
     }
 }
