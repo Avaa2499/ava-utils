@@ -5,12 +5,12 @@ use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, Tab
 
 pub const SCHEMA_VERSION: u64 = 1;
 
-const FILES: TableDefinition<&str, &[u8]> = TableDefinition::new("files");
-const EXT_NAME: TableDefinition<&str, ()> = TableDefinition::new("ext_name");
-const NAME_PATH: TableDefinition<&str, ()> = TableDefinition::new("name_path");
-const FOLDER_SIZES: TableDefinition<&str, u64> = TableDefinition::new("folder_sizes");
-const EXCLUSIONS: TableDefinition<&str, ()> = TableDefinition::new("exclusions");
-const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
+pub(crate) const FILES: TableDefinition<&str, &[u8]> = TableDefinition::new("files");
+pub(crate) const EXT_NAME: TableDefinition<&str, ()> = TableDefinition::new("ext_name");
+pub(crate) const NAME_PATH: TableDefinition<&str, ()> = TableDefinition::new("name_path");
+pub(crate) const FOLDER_SIZES: TableDefinition<&str, u64> = TableDefinition::new("folder_sizes");
+pub(crate) const EXCLUSIONS: TableDefinition<&str, ()> = TableDefinition::new("exclusions");
+pub(crate) const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 
 pub fn db_err<E: std::error::Error + Send + Sync + 'static>(e: E) -> Error {
     Error::Io(std::io::Error::other(e))
@@ -81,7 +81,7 @@ fn after_prefix(dir: &str) -> (String, String) {
 }
 
 pub struct Index {
-    db: Database,
+    pub(crate) db: Database,
 }
 
 impl Index {
