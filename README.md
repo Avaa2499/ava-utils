@@ -162,6 +162,28 @@ Examples only, not a roadmap: audio playback, video playback, compression, file 
 4. Two more modules of different kinds.
 5. Freeze the message format only after three modules work.
 
+## First modules: messages
+
+Draft. Names are working names; the boxes get defined in `ava-utils-config`.
+
+| Module | Answers | Sends (topic) | Listens to |
+|---|---|---|---|
+| indexer | `run-command`, `index-lookup`, `index-scan` (long job), `job-progress`, `job-cancel` | none | `files-changed` |
+| searcher | `run-command`, `search` | none | none |
+| watcher | `run-command`, `watch-set-roots` | `files-changed` (batched, current state on subscribe) | none |
+| cli | none | none | none |
+
+Calls made: cli → indexer, searcher, watcher (`run-command`); searcher → indexer (`index-lookup`). Topic flow: watcher → indexer.
+
+Loop check: the graph is cli → {indexer, searcher, watcher}, searcher → indexer, watcher → indexer. No loops, so no loop exceptions are needed.
+
+Decisions behind it:
+- The indexer owns the index; the searcher never reads it directly, it calls `index-lookup`.
+- The watcher owns its list of roots (set by the cli), so the indexer never calls the watcher. That would be a loop (watcher → indexer events, indexer → watcher call).
+- The indexer applies exclusion rules to what the watcher reports, so the watcher watches everything under its roots.
+- No `index-changed` topic yet: nothing listens to it. Add it when something does.
+- Open: `run-command`, `job-progress` and `job-cancel` are standard messages every module answers. "Install refuses a module that answers something another module already does" would refuse the second module, so standard messages need to be exempt from that check.
+
 
 TODO MODULES:
 
