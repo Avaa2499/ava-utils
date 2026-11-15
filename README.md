@@ -120,6 +120,12 @@ All directives verified present in systemd 259 on this machine.
 4. tokio only in each module's runnable program. Libraries stay plain Rust.
 5. Logs go to journald. Every line is tagged with the module name and the job/message ID.
 
+## Git
+
+- Commit after every small change, with a clear message. Never batch changes.
+- **HARD RULE: push to GitHub (`origin`) after every commit.** Never leave commits only local. Parallel subagents work from what is on GitHub. Pull with rebase before pushing; if a push is rejected, rebase and push again.
+- Never leave branches open long. Keep them short-lived: merge to `main` quickly, then delete the branch.
+
 ## Traps
 
 1. `catch_unwind` is not isolation. It misses aborts, stack overflows, C segfaults, OOM and deadlocks. The process is the boundary.
