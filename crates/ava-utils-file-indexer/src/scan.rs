@@ -21,6 +21,7 @@ pub struct ScanControl {
     pub dirs: AtomicU64,
     pub started: Instant,
     pub pause_per_dir: Duration,
+    pub batch_entries: usize,
 }
 
 impl ScanControl {
@@ -31,6 +32,7 @@ impl ScanControl {
             dirs: AtomicU64::new(0),
             started: Instant::now(),
             pause_per_dir: Duration::ZERO,
+            batch_entries: BATCH_ENTRIES,
         })
     }
 
@@ -41,6 +43,7 @@ impl ScanControl {
             dirs: AtomicU64::new(0),
             started: Instant::now(),
             pause_per_dir,
+            batch_entries: BATCH_ENTRIES,
         })
     }
 }
@@ -123,7 +126,13 @@ pub fn run_scan(
     let frontier_now = |batch: &[String]| -> Vec<String> {
         let g = lock(&shared.0);
         let mut out: Vec<String> = g.queue.iter().cloned().collect();
-        out.extend(g.uncommitted.iter().filter(|d| !batch.contains(d)).cloned());
+        let in_batch: HashSet<&String> = batch.iter().collect();
+        out.extend(
+            g.uncommitted
+                .iter()
+                .filter(|d| !in_batch.contains(d))
+                .cloned(),
+        );
         out
     };
     let initial = frontier_now(&[]);
@@ -188,8 +197,16 @@ pub fn run_scan(
         ctl.dirs.fetch_add(1, Ordering::SeqCst);
         batch.extend(walk.entries);
         batch_dirs.push(walk.dir);
-        if batch.len() >= BATCH_ENTRIES
-            && let Err(e) = commit(index, job, &mut batch, &mut batch_dirs, &frontier_now, ctl)
+        if batch.len() >= ctl.batch_entries
+            && let Err(e) = commit(
+                index,
+                job,
+                &mut batch,
+                &mut batch_dirs,
+                &frontier_now,
+                &shared.0,
+                ctl,
+            )
         {
             failure = Some(e);
             ctl.cancel.store(FORCE, Ordering::SeqCst);
@@ -199,7 +216,15 @@ pub fn run_scan(
     let forced = ctl.cancel.load(Ordering::SeqCst) == FORCE;
     if !forced
         && failure.is_none()
-        && let Err(e) = commit(index, job, &mut batch, &mut batch_dirs, &frontier_now, ctl)
+        && let Err(e) = commit(
+            index,
+            job,
+            &mut batch,
+            &mut batch_dirs,
+            &frontier_now,
+            &shared.0,
+            ctl,
+        )
     {
         failure = Some(e);
     }
@@ -228,10 +253,17 @@ fn commit(
     batch: &mut Vec<Entry>,
     batch_dirs: &mut Vec<String>,
     frontier_now: &dyn Fn(&[String]) -> Vec<String>,
+    shared: &Mutex<Shared>,
     ctl: &ScanControl,
 ) -> Result<()> {
     let frontier = frontier_now(batch_dirs);
     index.commit_scan(job, batch, &frontier)?;
+    {
+        let mut g = lock(shared);
+        for d in batch_dirs.iter() {
+            g.uncommitted.remove(d);
+        }
+    }
     ctl.entries.fetch_add(batch.len() as u64, Ordering::SeqCst);
     batch.clear();
     batch_dirs.clear();
@@ -242,6 +274,7 @@ fn commit(
 mod tests {
     use super::*;
     use crate::db::{temp_index, test_tree_root};
+    use ava_utils_config::messages::FileLookup;
 
     fn build_tree(tag: &str, fanout: usize, depth: usize) -> std::path::PathBuf {
         let root = test_tree_root(tag);
@@ -377,6 +410,54 @@ mod tests {
         .unwrap();
         assert_eq!(end, ScanEnd::Completed);
         assert_eq!(ix.count().unwrap(), expected_entries(4, 3));
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_saved_frontier_never_lists_folders_that_were_already_committed() {
+        let (dir, ix) = temp_index("scan-frontier");
+        let ix = Arc::new(ix);
+        let root = build_tree("scan-frontier", 4, 3);
+        let r = s(&root);
+        let ctl = Arc::new(ScanControl {
+            cancel: AtomicU8::new(RUN),
+            entries: AtomicU64::new(0),
+            dirs: AtomicU64::new(0),
+            started: Instant::now(),
+            pause_per_dir: Duration::from_millis(3),
+            batch_entries: 10,
+        });
+        let c2 = ctl.clone();
+        let canceller = thread::spawn(move || {
+            while c2.dirs.load(Ordering::SeqCst) < 40 {
+                thread::sleep(Duration::from_millis(2));
+            }
+            c2.cancel.store(SAFE, Ordering::SeqCst);
+        });
+        let end = run_scan(
+            &ix,
+            "job",
+            std::slice::from_ref(&r),
+            vec![r.clone()],
+            1,
+            &ctl,
+            2,
+        )
+        .unwrap();
+        canceller.join().unwrap();
+        assert_eq!(end, ScanEnd::Paused);
+        for d in ix.frontier("job").unwrap() {
+            let q = FileLookup {
+                under: Some(d.clone()),
+                limit: Some(2),
+                ..Default::default()
+            };
+            assert!(
+                ix.lookup(&q).unwrap().files.is_empty(),
+                "{d} was walked but is still in the frontier"
+            );
+        }
         let _ = std::fs::remove_dir_all(dir);
         let _ = std::fs::remove_dir_all(root);
     }
