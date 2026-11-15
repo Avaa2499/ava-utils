@@ -17,25 +17,22 @@ Scoring:
 
 ----
 
-1. [2] Messages for the first modules. List what indexer, searcher and cli send, listen to and answer.
-   Done when: the list is written down and has no loops.
-
-2. [2] `ava-utils-config`. Envelope + MessagePack, connect/send/reply with the 5s cutoff, retry (2s doubling to 2 min, then every 5 min), size-limited subscriber queues, current state on subscribe, job IDs, command-line flag reading, manifest format + parser.
+1. [2] `ava-utils-config`. Envelope + MessagePack, connect/send/reply with the 5s cutoff, retry (2s doubling to 2 min, then every 5 min), size-limited subscriber queues, current state on subscribe, job IDs, command-line flag reading, manifest format + parser.
    Done when: two toy processes talk over a socket and the tests pass.
 
-3. [2] `ava-utils-cli`. install/remove (manifest check, loop check, socket + service units), `ava-utils <module> <args>`, messages shown as readable text (flag for raw), runs a module's tests and the `kill -9` test on install.
+2. [2] `ava-utils-cli`. install/remove (manifest check, loop check, socket + service units), `ava-utils <module> <args>`, messages shown as readable text (flag for raw), runs a module's tests and the `kill -9` test on install.
    Done when: the toy module installs and is called from it.
 
-4. [2] `ava-utils-indexer`. Owns the index in `~/.local/state/ava-utils/indexer/` (redb). Parallel walk, exclusions, folder sizes. A scan is a long job: job ID, progress on request, force and safe cancel.
+3. [2] `ava-utils-indexer`. Owns the index in `~/.local/state/ava-utils/indexer/` (redb). Parallel walk, exclusions, folder sizes. A scan is a long job: job ID, progress on request, force and safe cancel.
    Done when: a scan of $HOME completes, survives `kill -9`, and resumes after a safe cancel.
 
-5. [2] `ava-utils-searcher`. Query logic; asks the indexer for records.
+4. [2] `ava-utils-searcher`. Query logic; asks the indexer for records.
    Done when: a search from the cli returns results and starts both modules on demand.
 
-6. [2] `ava-utils-watcher`. Batched "files changed" messages; the indexer applies them.
+5. [2] `ava-utils-watcher`. Batched "files changed" messages; the indexer applies them.
    Done when: a new file shows up in search without a rescan.
 
-7. [2] Freeze the message format.
+6. [2] Freeze the message format.
    Done when: three modules work together.
 
 
