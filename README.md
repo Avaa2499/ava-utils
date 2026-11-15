@@ -27,7 +27,7 @@ A distributed mesh of concept-bound modules. Data flows directly between modules
 
 Every module follows these. No exceptions, ever.
 
-1. **Naming:** `ava-utils-*`, e.g. `ava-utils-video-playback`: input a video file or stream, and it plays it.
+1. **Naming:** `ava-utils-*`, e.g. `ava-utils-video-playback`: input a video file or stream, and it plays it. A module is named for what it works on, so `file-indexer`, `file-searcher`, `file-watcher` (a web search module would be `web-searcher`). The CLI crate is `ava-utils-cli`; its program is `au`, used as `au file-searcher find "*.rs"`.
 2. **Communication:** on startup, a module subscribes to the endpoints it wants. If one is down, it retries after 2s, then 4s, doubling each time. At 2 minutes it flags a hard error and checks once every 5 minutes, so a module can be replaced live without restarting the stack.
 3. **Request format:** the envelope (the boxes every message carries) is defined in `ava-utils-config`. Its details get decided when that crate is built.
 4. **Library:** every module is a library crate (does all the real work, testable without starting anything) plus a small program that starts up, listens for messages and hands them to the library.
@@ -45,7 +45,7 @@ Every module follows these. No exceptions, ever.
 - Producers never block. Each subscriber has a size-limited queue; if it overflows, that subscriber is disconnected, reconnects and gets the current state.
 - When a subscriber connects, the producer immediately sends the topic's current state. Nobody needs a call to resync.
 - Topic and call names: no fixed scheme, named to fit what they are.
-- Messages are binary, encoded with MessagePack. It's hidden inside `ava-utils-config`, so it can be swapped for our own format later without touching any module. Each message carries its box names, not just the values, so updating one module never breaks the others. The `ava-utils` CLI is the parser: it shows messages as readable text, with a flag to show the raw binary instead.
+- Messages are binary, encoded with MessagePack. It's hidden inside `ava-utils-config`, so it can be swapped for our own format later without touching any module. Each message carries its box names, not just the values, so updating one module never breaks the others. The `au` CLI is the parser: it shows messages as readable text, with a flag to show the raw binary instead.
 - Codecs: `ava-utils-codecs` is a shared crate, not a module. It uses the codec libraries already installed on the system (libavcodec, libdav1d, libvpx, libopus), so the heavy code exists once. Video playback, audio playback and convert-file (e.g. .mkv → .mp4) build it in.
 - Never two modules doing the same thing. This is a design rule, not an install check. Install only checks loops, manifests and tests.
 
@@ -63,7 +63,7 @@ Every module follows these. No exceptions, ever.
 - Each manifest binds every call a module makes and every topic it listens to onto a module name (e.g. `file-lookup` → `file-indexer`). A module reads its manifest to find the socket to connect to. The code only knows the message, never the module name.
 - Install refuses a module with a missing manifest, or whose messages don't match it.
 - Stored in `~/.config/ava-utils/`.
-- It also lists the module's CLI commands (name + one-line help), so `ava-utils help` and tab completion work without starting the module.
+- It also lists the module's CLI commands (name + one-line help), so `au help` and tab completion work without starting the module.
 
 ## Cycles
 
@@ -92,12 +92,12 @@ Every module follows these. No exceptions, ever.
 - Big working files (e.g. 40,000 files unpacked from a zip) go in `~/.cache/ava-utils/<module>/`. The module deletes them when the job finishes.
 - A shared cache crate for big working files gets built only if one is actually needed.
 
-## The `ava-utils` CLI
+## The `au` CLI
 
-- One command for everything: install, remove, cycle check, and using modules as `ava-utils <module-suffix> <arguments>`.
+- One command for everything: install, remove, cycle check, and using modules as `au <module-suffix> <arguments>`.
 - It exits when done, so nothing depends on it running.
 - Reading command-line flags lives in `ava-utils-config`, not in a module.
-- `ava-utils <module> <args>`: the CLI sends the raw arguments to the module in one standard "run this command" message. The module parses them (with the flag code in `ava-utils-config`) and replies with text to print. The CLI knows nothing about any specific module's arguments.
+- `au <module> <args>`: the CLI sends the raw arguments to the module in one standard "run this command" message. The module parses them (with the flag code in `ava-utils-config`) and replies with text to print. The CLI knows nothing about any specific module's arguments.
 - Updating a module replaces it and restarts only that module. Everything else keeps running.
 - Removing a module: anything using it follows standard 2's retry rules and carries on doing what it can.
 
@@ -157,7 +157,7 @@ Examples only, not a roadmap: audio playback, video playback, compression, file 
 ## Build order
 
 1. Topics and calls for the first three modules; check them against the cycle rule. (~1 hour)
-2. `ava-utils-config` + manifest format + `ava-utils` CLI with the cycle check. (~a weekend)
+2. `ava-utils-config` + manifest format + `au` CLI with the cycle check. (~a weekend)
 3. First module: picked once the whole architecture is planned.
 4. Two more modules of different kinds.
 5. Freeze the message format only after three modules work.
@@ -168,19 +168,19 @@ Draft. Names are working names; the boxes get defined in `ava-utils-config`.
 
 | Module | Answers | Sends (topic) | Listens to |
 |---|---|---|---|
-| indexer | `run-command`, `index-lookup`, `index-scan` (long job), `job-progress`, `job-cancel` | none | `files-changed` |
-| searcher | `run-command`, `search` | none | none |
-| watcher | `run-command`, `watch-set-roots` | `files-changed` (batched, current state on subscribe) | none |
+| file-indexer | `run-command`, `index-lookup`, `index-scan` (long job), `job-progress`, `job-cancel` | none | `files-changed` |
+| file-searcher | `run-command`, `search` | none | none |
+| file-watcher | `run-command`, `watch-set-roots` | `files-changed` (batched, current state on subscribe) | none |
 | cli | none | none | none |
 
-Calls made: cli → indexer, searcher, watcher (`run-command`); searcher → indexer (`index-lookup`). Topic flow: watcher → indexer.
+Calls made: cli → file-indexer, file-searcher, file-watcher (`run-command`); file-searcher → file-indexer (`index-lookup`). Topic flow: file-watcher → file-indexer.
 
-Loop check: the graph is cli → {indexer, searcher, watcher}, searcher → indexer, watcher → indexer. No loops, so no loop exceptions are needed.
+Loop check: the graph is cli → {file-indexer, file-searcher, file-watcher}, file-searcher → file-indexer, file-watcher → file-indexer. No loops, so no loop exceptions are needed.
 
 Decisions behind it:
-- The indexer owns the index; the searcher never reads it directly, it calls `index-lookup`.
-- The watcher owns its list of roots (set by the cli), so the indexer never calls the watcher. That would be a loop (watcher → indexer events, indexer → watcher call).
-- The indexer applies exclusion rules to what the watcher reports, so the watcher watches everything under its roots.
+- The file-indexer owns the index; the file-searcher never reads it directly, it calls `index-lookup`.
+- The file-watcher owns its list of roots (set by the cli), so the file-indexer never calls the file-watcher. That would be a loop (file-watcher → file-indexer events, file-indexer → file-watcher call).
+- The file-indexer applies exclusion rules to what the file-watcher reports, so the file-watcher watches everything under its roots.
 - No `index-changed` topic yet: nothing listens to it. Add it when something does.
 - `run-command`, `job-progress` and `job-cancel` are standard messages every module answers. The CLI picks the module by name, so they never clash.
 
