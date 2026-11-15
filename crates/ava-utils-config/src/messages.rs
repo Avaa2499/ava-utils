@@ -27,6 +27,7 @@ pub struct JobProgress {
 #[serde(rename_all = "lowercase")]
 pub enum JobState {
     Running,
+    Paused,
     Done,
     Cancelled,
     Failed,
@@ -40,6 +41,8 @@ pub struct JobStatus {
     pub percent: Option<u8>,
     #[serde(default)]
     pub eta_secs: Option<u64>,
+    #[serde(default)]
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,6 +133,7 @@ mod tests {
             state: JobState::Running,
             percent: Some(50),
             eta_secs: None,
+            detail: None,
         };
         let e = Envelope::reply(
             &Envelope::call(JOB_PROGRESS, &JobProgress { job: s.job.clone() }).unwrap(),
