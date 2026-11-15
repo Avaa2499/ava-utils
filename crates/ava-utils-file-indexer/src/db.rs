@@ -11,6 +11,8 @@ pub(crate) const NAME_PATH: TableDefinition<&str, ()> = TableDefinition::new("na
 pub(crate) const FOLDER_SIZES: TableDefinition<&str, u64> = TableDefinition::new("folder_sizes");
 pub(crate) const EXCLUSIONS: TableDefinition<&str, ()> = TableDefinition::new("exclusions");
 pub(crate) const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
+pub(crate) const JOBS: TableDefinition<&str, &[u8]> = TableDefinition::new("jobs");
+pub(crate) const FRONTIER: TableDefinition<&str, ()> = TableDefinition::new("frontier");
 
 pub fn db_err<E: std::error::Error + Send + Sync + 'static>(e: E) -> Error {
     Error::Io(std::io::Error::other(e))
@@ -98,6 +100,8 @@ impl Index {
             w.open_table(NAME_PATH).map_err(db_err)?;
             w.open_table(FOLDER_SIZES).map_err(db_err)?;
             w.open_table(EXCLUSIONS).map_err(db_err)?;
+            w.open_table(JOBS).map_err(db_err)?;
+            w.open_table(FRONTIER).map_err(db_err)?;
             let mut meta = w.open_table(META).map_err(db_err)?;
             let have = meta.get("schema").map_err(db_err)?.map(|g| g.value());
             match have {
@@ -135,6 +139,86 @@ impl Index {
             }
         }
         w.commit().map_err(db_err)
+    }
+
+    pub fn commit_scan(&self, job: &str, entries: &[Entry], frontier: &[String]) -> Result<()> {
+        let w = self.db.begin_write().map_err(db_err)?;
+        {
+            let mut files = w.open_table(FILES).map_err(db_err)?;
+            let mut names = w.open_table(NAME_PATH).map_err(db_err)?;
+            let mut exts = w.open_table(EXT_NAME).map_err(db_err)?;
+            for e in entries {
+                files
+                    .insert(e.path.as_str(), e.record.to_bytes().as_slice())
+                    .map_err(db_err)?;
+                names
+                    .insert(name_key(&e.path).as_str(), ())
+                    .map_err(db_err)?;
+                if !e.record.is_dir {
+                    exts.insert(ext_key(&e.path).as_str(), ()).map_err(db_err)?;
+                }
+            }
+            let mut fr = w.open_table(FRONTIER).map_err(db_err)?;
+            let (from, to) = (format!("{job}\0"), format!("{job}\u{1}"));
+            let old: Vec<String> = fr
+                .range(from.as_str()..to.as_str())
+                .map_err(db_err)?
+                .map(|r| r.map(|(k, _)| k.value().to_string()))
+                .collect::<std::result::Result<_, _>>()
+                .map_err(db_err)?;
+            for k in old {
+                fr.remove(k.as_str()).map_err(db_err)?;
+            }
+            for dir in frontier {
+                fr.insert(format!("{job}\0{dir}").as_str(), ())
+                    .map_err(db_err)?;
+            }
+        }
+        w.commit().map_err(db_err)
+    }
+
+    pub fn frontier(&self, job: &str) -> Result<Vec<String>> {
+        let r = self.db.begin_read().map_err(db_err)?;
+        let fr = r.open_table(FRONTIER).map_err(db_err)?;
+        let (from, to) = (format!("{job}\0"), format!("{job}\u{1}"));
+        let mut out = Vec::new();
+        for row in fr.range(from.as_str()..to.as_str()).map_err(db_err)? {
+            let k = row.map_err(db_err)?.0;
+            if let Some((_, dir)) = k.value().split_once('\0') {
+                out.push(dir.to_string());
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn clear_frontier(&self, job: &str) -> Result<()> {
+        self.commit_scan(job, &[], &[])
+    }
+
+    pub fn save_job(&self, id: &str, bytes: &[u8]) -> Result<()> {
+        let w = self.db.begin_write().map_err(db_err)?;
+        w.open_table(JOBS)
+            .map_err(db_err)?
+            .insert(id, bytes)
+            .map_err(db_err)?;
+        w.commit().map_err(db_err)
+    }
+
+    pub fn load_job(&self, id: &str) -> Result<Option<Vec<u8>>> {
+        let r = self.db.begin_read().map_err(db_err)?;
+        let t = r.open_table(JOBS).map_err(db_err)?;
+        Ok(t.get(id).map_err(db_err)?.map(|g| g.value().to_vec()))
+    }
+
+    pub fn list_jobs(&self) -> Result<Vec<(String, Vec<u8>)>> {
+        let r = self.db.begin_read().map_err(db_err)?;
+        let t = r.open_table(JOBS).map_err(db_err)?;
+        let mut out = Vec::new();
+        for row in t.iter().map_err(db_err)? {
+            let (k, v) = row.map_err(db_err)?;
+            out.push((k.value().to_string(), v.value().to_vec()));
+        }
+        Ok(out)
     }
 
     pub fn get(&self, path: &str) -> Result<Option<Record>> {
@@ -312,6 +396,38 @@ mod tests {
         assert_eq!(ix.remove_tree("/a").unwrap(), 3);
         assert_eq!(ix.count().unwrap(), 1);
         assert!(ix.get("/ab/z.txt").unwrap().is_some());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn frontier_is_replaced_per_job_and_survives_reopen() {
+        let (dir, ix) = temp_index("frontier");
+        ix.commit_scan(
+            "j1",
+            &[entry("/a/x", 1, false)],
+            &["/a".into(), "/b".into()],
+        )
+        .unwrap();
+        ix.commit_scan("j2", &[], &["/z".into()]).unwrap();
+        ix.commit_scan("j1", &[], &["/c".into()]).unwrap();
+        drop(ix);
+        let ix = Index::open(&dir.join("index.redb")).unwrap();
+        assert_eq!(ix.frontier("j1").unwrap(), ["/c"]);
+        assert_eq!(ix.frontier("j2").unwrap(), ["/z"]);
+        assert_eq!(ix.count().unwrap(), 1);
+        ix.clear_frontier("j1").unwrap();
+        assert!(ix.frontier("j1").unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn jobs_are_stored_and_listed() {
+        let (dir, ix) = temp_index("jobs");
+        ix.save_job("j1", b"one").unwrap();
+        ix.save_job("j2", b"two").unwrap();
+        assert_eq!(ix.load_job("j1").unwrap().as_deref(), Some(&b"one"[..]));
+        assert_eq!(ix.load_job("nope").unwrap(), None);
+        assert_eq!(ix.list_jobs().unwrap().len(), 2);
         let _ = std::fs::remove_dir_all(dir);
     }
 
