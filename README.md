@@ -10,7 +10,7 @@ A growing suite of small, independent Rust modules, optimised around the user's 
 - **NO SINGLE POINTS OF FAILURE.** No running ava-utils process that other modules need. systemd and the filesystem are the accepted floor; replace them where it's genuinely better and worth redoing.
 - **Platform:** Linux for now. Other OSes later.
 - **Dependencies:** no module depends on another module. External crates and shared library crates are allowed.
-- **Coupling:** no module depends on another module at compile time. At runtime a module reaches another by module name, but the name lives only in the manifest, never in code. `ava-utils reroute` rewrites it across all manifests, so splitting or renaming a module never touches module code.
+- **Coupling:** no module depends on another module at compile time. At runtime a module reaches another by module name, but the name lives only in the manifest, never in code. Renaming or splitting a module means a find-and-replace across the manifests that name it. No module code changes and nothing is rebuilt.
 - **Communication:** topics (events) and calls (request/response), declared in each module's manifest.
 - **Data path:** peer to peer. Never a central broker.
 - **Cycles:** all loops banned (calls and events), checked at install time. Exception: a manifest can allow loops with specific named modules.
@@ -98,7 +98,6 @@ Every module follows these. No exceptions, ever.
 - It exits when done, so nothing depends on it running.
 - Reading command-line flags lives in `ava-utils-config`, not in a module.
 - `ava-utils <module> <args>`: the CLI sends the raw arguments to the module in one standard "run this command" message. The module parses them (with the flag code in `ava-utils-config`) and replies with text to print. The CLI knows nothing about any specific module's arguments.
-- `ava-utils reroute <old> <new>`: rewrites every manifest that points at `<old>` to point at `<new>`. Modules pick it up the next time they retry.
 - Updating a module replaces it and restarts only that module. Everything else keeps running.
 - Removing a module: anything using it follows standard 2's retry rules and carries on doing what it can.
 
