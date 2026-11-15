@@ -1,0 +1,45 @@
+This is an exceptionally well-thought-out architectural plan. You aren't just building a library; you are designing a **distributed microkernel for userland**.
+
+The decision to use **systemd socket activation** as the lifecycle manager is the "pro move" here. It offloads the most difficult parts of distributed systems (service discovery, lifecycle, and process supervision) to a battle-tested init system, allowing you to focus on the domain logic.
+
+Here is a breakdown of what is brilliant, what is risky, and what you should watch out for.
+
+### The "Brilliant" Parts
+1.  **The "Boxes" Messaging Pattern:** Using MessagePack with named keys (boxes) is the right way to handle versioning. It allows you to evolve the protocol (adding fields) without the "fragile base class" problem or the binary breakage seen in `bincode`.
+2.  **Socket Activation:** Using `LISTEN_FDS` via systemd means your modules are truly "on-demand." This solves the "startup storm" problem where a system tries to launch 50 processes at login.
+3.  **The Manifest-Based Discovery:** This is the genius of the plan. By moving the "identity" of a module out of the code and into a manifest, you've decoupled the *logic* from the *topology*. You can swap `ava-utils-file-searcher` for `ava-utils-super-searcher` without recompiling anything.
+4.  **Failure Containment:** Your "Bad Input" handling (the 3-crash-limit per specific input) is a high-level concept usually only seen in robust OS kernels. It prevents a "poison pill" message from infinitely restarting a service.
+
+### The "Risky" Parts (The Potential Pitfalls)
+
+#### 1. The `ava-utils-config` Bottleneck
+You’ve designated this as the "one shared crate" that can't go down. This makes it a **logical single point of failure**.
+*   **The Risk:** If this crate grows to include everything (all message definitions, all box names, all CLI logic), it becomes a "God Crate." Any change to a single message in a tiny module requires recompiling the entire workspace and potentially updating every other module to ensure they still align with the new `config` version.
+*   **Mitigation:** Keep `config` strictly limited to the *envelope* and the *primitive types*. Do not put specific business logic (like `search_query_type`) in there. Use the "boxes" to pass arbitrary data structures that are loosely coupled.
+
+#### 2. The Complexity of "Install-Time" Validation
+You are essentially building a static linker/validator that operates at the system level.
+*   **The Risk:** As the number of modules grows, the "install" step becomes a graph-validation problem. If Module A depends on B, and B on C, and C on A, your installer must catch it. If you allow "named loops," the complexity of the validator increases.
+*   **Mitigation:** Ensure the manifest format is a simple, standardized schema (like JSON or TOML). Write a very rigorous suite of test cases for the `au install` logic that tests every possible cycle permutation.
+
+#### 3. The "Two-Module Loop" Exception
+*   **The Risk:** You mentioned: *"A module's manifest can name specific modules it's allowed to loop with."* This is a dangerous "escape hatch." While you limit it to two modules, a user (or a complex module) could create a chain of two-module loops ($A \leftrightarrow B$ and $B \leftrightarrow C$) which effectively creates a 3-module loop ($A \to B \to C \to B \dots$).
+*   **Mitigation:** The validator must check the *transitive closure* of the allowed loops. If A is allowed to loop with B, and B is allowed to loop with C, the installer should ideally flag that this creates a multi-step dependency chain that could lead to the very instability you're trying to avoid.
+
+#### 4. Error Propagation & "The Ghost in the Machine"
+*   **The Risk:** In a distributed system, "Partial Failure" is the norm. If `file-searcher` calls `file-indexer`, and `file-indexer` is currently restarting (the 2s-4s-8s retry loop), the `file-searcher` receives an `Unavailable`. What does it tell the user? Does it wait? Does it fail?
+*   **Mitigation:** You need a standardized "Status/State" topic. A module should be able to query the *state* of its dependencies (e.g., `status(file-indexer) -> {Running | Restarting | Down}`).
+
+### Technical Questions / Suggestions
+
+*   **On Permissions:** Since you are using `$XDG_RUNTIME_DIR`, all modules likely run under the same user. This is great for simplicity. However, if you ever want to run a module as `root` (e.g., a hardware driver) or a different user, your "Socket-only" and "Peer-to-Peer" model will need a way to handle Unix domain socket permissions.
+*   **On Data Path (The "Reference" rule):** You say: *"Pass references (paths), never bulk bytes."* This is excellent for performance, but it introduces **Temporal Coupling**. If Module A sends a path to Module B, Module A must guarantee that the file/resource at that path remains valid for the duration of the call. If Module A deletes the file before Module B finishes, Module B crashes.
+    *   *Recommendation:* Define a "Lease" or "Ownership" concept for files, or simply accept that `Unavailable` is a valid response to "File Not Found" during a transient state.
+*   **On the "5s Timeout":** 5 seconds is plenty for a local socket, but it's very aggressive if a module is doing heavy I/O (like a `file-indexer` scanning a 4TB drive). Ensure your "Long Jobs" (which you correctly identified) are handled via the "Started/JobID" pattern so they don't trigger the 5s timeout.
+
+### Verdict
+**The plan is solid.** It is a sophisticated approach to modular software design that prioritizes **system stability** and **developer velocity** (via loose coupling).
+
+If you can solve the **"God Crate"** problem in `ava-utils-config` and keep the **Manifest Validator** mathematically sound, you will have a framework that is much more resilient than any monolithic "all-in-one" utility suite.
+
+**Proceed to Step 1 (Build order).**
