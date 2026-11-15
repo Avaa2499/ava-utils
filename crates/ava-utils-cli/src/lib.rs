@@ -1,3 +1,4 @@
+pub mod help;
 pub mod install;
 pub mod loops;
 pub mod run;
