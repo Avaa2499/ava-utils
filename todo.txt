@@ -17,28 +17,31 @@ Scoring:
 
 ----
 
-1. [2] Spike: lazy start. A toy module behind `ava-utils@.socket` + `ava-utils@.service` (systemd user units).
+1. [2] Build tooling. Install sccache (`sudo dnf install sccache`) and add it to `~/.cargo/config.toml` (mold is already set there). Later, a `justfile` (check, test, clippy, fmt) goes in with the Cargo workspace.
+   Done when: a second build of a throwaway crate shows cache hits in `sccache --show-stats`.
+
+2. [2] Spike: lazy start. A toy module behind `ava-utils@.socket` + `ava-utils@.service` (systemd user units).
    Done when: the first connection starts it, and `kill -9` brings it back.
 
-2. [2] Messages for the first modules. List what indexer, searcher and cli send, listen to and answer.
+3. [2] Messages for the first modules. List what indexer, searcher and cli send, listen to and answer.
    Done when: the list is written down and has no loops.
 
-3. [2] `ava-utils-config`. Envelope + MessagePack, connect/send/reply with the 5s cutoff, retry (2s doubling to 2 min, then every 5 min), size-limited subscriber queues, current state on subscribe, job IDs, command-line flag reading, manifest format + parser.
+4. [2] `ava-utils-config`. Envelope + MessagePack, connect/send/reply with the 5s cutoff, retry (2s doubling to 2 min, then every 5 min), size-limited subscriber queues, current state on subscribe, job IDs, command-line flag reading, manifest format + parser.
    Done when: two toy processes talk over a socket and the tests pass.
 
-4. [2] `ava-utils-cli`. install/remove (manifest check, loop check, socket + service units), `ava-utils <module> <args>`, messages shown as readable text (flag for raw), runs a module's tests and the `kill -9` test on install.
+5. [2] `ava-utils-cli`. install/remove (manifest check, loop check, socket + service units), `ava-utils <module> <args>`, messages shown as readable text (flag for raw), runs a module's tests and the `kill -9` test on install.
    Done when: the toy module installs and is called from it.
 
-5. [2] `ava-utils-indexer`. Owns the index in `~/.local/state/ava-utils/indexer/` (redb). Parallel walk, exclusions, folder sizes. A scan is a long job: job ID, progress on request, force and safe cancel.
+6. [2] `ava-utils-indexer`. Owns the index in `~/.local/state/ava-utils/indexer/` (redb). Parallel walk, exclusions, folder sizes. A scan is a long job: job ID, progress on request, force and safe cancel.
    Done when: a scan of $HOME completes, survives `kill -9`, and resumes after a safe cancel.
 
-6. [2] `ava-utils-searcher`. Query logic; asks the indexer for records.
+7. [2] `ava-utils-searcher`. Query logic; asks the indexer for records.
    Done when: a search from the cli returns results and starts both modules on demand.
 
-7. [2] `ava-utils-watcher`. Batched "files changed" messages; the indexer applies them.
+8. [2] `ava-utils-watcher`. Batched "files changed" messages; the indexer applies them.
    Done when: a new file shows up in search without a rescan.
 
-8. [2] Freeze the message format.
+9. [2] Freeze the message format.
    Done when: three modules work together.
 
 
