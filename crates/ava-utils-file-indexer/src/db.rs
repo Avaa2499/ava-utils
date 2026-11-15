@@ -407,9 +407,7 @@ pub fn temp_index(tag: &str) -> (std::path::PathBuf, Index) {
 
 #[cfg(test)]
 pub fn test_tree_root(tag: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/au-fi-trees")
-        .join(format!("{}-{tag}", std::process::id()))
+    std::path::Path::new("/var/tmp/au-fi-trees").join(format!("{}-{tag}", std::process::id()))
 }
 
 #[cfg(test)]

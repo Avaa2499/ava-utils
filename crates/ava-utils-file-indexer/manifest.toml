@@ -1,0 +1,30 @@
+module = "file-indexer"
+answers = ["run-command", "job-progress", "job-cancel", "file-lookup"]
+
+[[listens]]
+message = "files-changed"
+module = "file-watcher"
+
+[[commands]]
+name = "scan"
+help = "Scan folders into the index (default: $HOME); starts a job"
+
+[[commands]]
+name = "status"
+help = "Index size and the latest job"
+
+[[commands]]
+name = "progress"
+help = "Show a job's progress: progress <job>"
+
+[[commands]]
+name = "cancel"
+help = "Cancel a job: cancel <job> [--safe|--force]"
+
+[[commands]]
+name = "resume"
+help = "Resume a paused job: resume <job>"
+
+[[commands]]
+name = "exclude"
+help = "Manage exclusion patterns: exclude add|remove|list [pattern]"

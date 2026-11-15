@@ -4,3 +4,4 @@ pub mod exclude;
 pub mod jobs;
 pub mod lookup;
 pub mod scan;
+pub mod service;
