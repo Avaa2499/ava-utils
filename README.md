@@ -10,7 +10,7 @@ A growing suite of small, independent Rust modules, optimised around the user's 
 - **NO SINGLE POINTS OF FAILURE.** No running ava-utils process that other modules need. systemd and the filesystem are the accepted floor; replace them where it's genuinely better and worth redoing.
 - **Platform:** Linux for now. Other OSes later.
 - **Dependencies:** no module depends on another module. External crates and shared library crates are allowed.
-- **Coupling:** no module depends on another module, at compile time or by name at runtime.
+- **Coupling:** no module depends on another module at compile time. At runtime a module reaches another by module name, but the name lives only in the manifest, never in code. `ava-utils reroute` rewrites it across all manifests, so splitting or renaming a module never touches module code.
 - **Communication:** topics (events) and calls (request/response), declared in each module's manifest.
 - **Data path:** peer to peer. Never a central broker.
 - **Cycles:** all loops banned (calls and events), checked at install time. Exception: a manifest can allow loops with specific named modules.
@@ -60,7 +60,7 @@ Every module follows these. No exceptions, ever.
 
 - Every module comes with a manifest listing the names of the messages it sends, listens to and answers. (The boxes inside each message are defined in `ava-utils-config`.)
 - Install reads the manifests to check for loops.
-- Modules find each other by reading the manifests: find which module answers or sends a message, then connect to that module's socket.
+- Each manifest binds every call a module makes and every topic it listens to onto a module name (e.g. `file-lookup` → `file-indexer`). A module reads its manifest to find the socket to connect to. The code only knows the message, never the module name.
 - Install refuses a module with a missing manifest, or whose messages don't match it.
 - Stored in `~/.config/ava-utils/`.
 - It also lists the module's CLI commands (name + one-line help), so `ava-utils help` and tab completion work without starting the module.
@@ -98,6 +98,7 @@ Every module follows these. No exceptions, ever.
 - It exits when done, so nothing depends on it running.
 - Reading command-line flags lives in `ava-utils-config`, not in a module.
 - `ava-utils <module> <args>`: the CLI sends the raw arguments to the module in one standard "run this command" message. The module parses them (with the flag code in `ava-utils-config`) and replies with text to print. The CLI knows nothing about any specific module's arguments.
+- `ava-utils reroute <old> <new>`: rewrites every manifest that points at `<old>` to point at `<new>`. Modules pick it up the next time they retry.
 - Updating a module replaces it and restarts only that module. Everything else keeps running.
 - Removing a module: anything using it follows standard 2's retry rules and carries on doing what it can.
 
