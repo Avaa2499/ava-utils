@@ -1,0 +1,10 @@
+module = "toy"
+answers = ["run-command"]
+
+[[commands]]
+name = "ping"
+help = "Reply with pong and the process id"
+
+[[commands]]
+name = "echo"
+help = "Print the arguments back"
