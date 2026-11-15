@@ -40,6 +40,4 @@ Scoring:
 
 Answer on the "> " line. Blank = not accepted. Answered ones move to README.md.
 
-1. Names of the standard messages every module answers: `run-command`, `job-progress`, `job-cancel`.
-   Accept?
->wdym? like, find says "run command index lookup" and indexer goes "job progress: started, job progress: 50% done, job progress: done, heres your file :3" if so, sure. fine by me.
+(none open right now)
