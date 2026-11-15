@@ -17,16 +17,13 @@ Scoring:
 
 ----
 
-1. [2] `ava-utils-file-indexer`. Owns the index in `~/.local/state/ava-utils/file-indexer/` (redb). Parallel walk, exclusions, folder sizes. A scan is a long job: job ID, progress on request, force and safe cancel.
-   Done when: a scan of a chosen folder (never $HOME by default) completes, survives `kill -9`, and resumes after a safe cancel.
-
-2. [2] `ava-utils-file-searcher`. Query logic; asks the file-indexer for records.
+1. [2] `ava-utils-file-searcher`. Query logic; asks the file-indexer for records.
    Done when: a search from the cli returns results and starts both modules on demand.
 
-3. [2] `ava-utils-file-watcher`. Batched "files changed" messages; the file-indexer applies them.
+2. [2] `ava-utils-file-watcher`. Batched "files changed" messages; the file-indexer applies them.
    Done when: a new file shows up in search without a rescan.
 
-4. [2] Freeze the message format.
+3. [2] Freeze the message format.
    Done when: three modules work together.
 
 

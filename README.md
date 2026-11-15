@@ -2,7 +2,7 @@
 
 A growing suite of small, independent Rust modules, optimised around the user's Linux machine. Each module does one bounded job and publishes its own inputs and outputs. Modules work together through shared topics and calls, never through direct dependencies. New things get their own module, never tacked onto an existing one. The suite is designed to grow indefinitely.
 
-**Status:** building. `ava-utils-config` and the `au` CLI are done. Next: the file indexer.
+**Status:** building. `ava-utils-config`, the `au` CLI and `ava-utils-file-indexer` are done. Next: the file searcher.
 
 ## Locked decisions
 
