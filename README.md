@@ -2,7 +2,7 @@
 
 A growing suite of small, independent Rust modules, optimised around the user's Linux machine. Each module does one bounded job and publishes its own inputs and outputs. Modules work together through shared topics and calls, never through direct dependencies. New things get their own module, never tacked onto an existing one. The suite is designed to grow indefinitely.
 
-**Status:** planning. No code yet.
+**Status:** building. `ava-utils-config` is done. Next: the `au` CLI.
 
 ## Locked decisions
 
