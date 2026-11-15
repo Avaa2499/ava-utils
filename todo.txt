@@ -20,16 +20,16 @@ Scoring:
 1. [2] `ava-utils-config`. Envelope + MessagePack, connect/send/reply with the 5s cutoff, retry (2s doubling to 2 min, then every 5 min), size-limited subscriber queues, current state on subscribe, job IDs, command-line flag reading, manifest format + parser.
    Done when: two toy processes talk over a socket and the tests pass.
 
-2. [2] `ava-utils-cli`. install/remove (manifest check, loop check, socket + service units), `ava-utils <module> <args>`, messages shown as readable text (flag for raw), runs a module's tests and the `kill -9` test on install.
+2. [2] `ava-utils-cli`. install/remove (manifest check, loop check, socket + service units), `au <module> <args>`, messages shown as readable text (flag for raw), runs a module's tests and the `kill -9` test on install.
    Done when: the toy module installs and is called from it.
 
-3. [2] `ava-utils-indexer`. Owns the index in `~/.local/state/ava-utils/indexer/` (redb). Parallel walk, exclusions, folder sizes. A scan is a long job: job ID, progress on request, force and safe cancel.
+3. [2] `ava-utils-file-indexer`. Owns the index in `~/.local/state/ava-utils/file-indexer/` (redb). Parallel walk, exclusions, folder sizes. A scan is a long job: job ID, progress on request, force and safe cancel.
    Done when: a scan of $HOME completes, survives `kill -9`, and resumes after a safe cancel.
 
-4. [2] `ava-utils-searcher`. Query logic; asks the indexer for records.
+4. [2] `ava-utils-file-searcher`. Query logic; asks the file-indexer for records.
    Done when: a search from the cli returns results and starts both modules on demand.
 
-5. [2] `ava-utils-watcher`. Batched "files changed" messages; the indexer applies them.
+5. [2] `ava-utils-file-watcher`. Batched "files changed" messages; the file-indexer applies them.
    Done when: a new file shows up in search without a rescan.
 
 6. [2] Freeze the message format.
@@ -40,16 +40,6 @@ Scoring:
 
 Answer on the "> " line. Blank = not accepted. Answered ones move to README.md.
 
-1. Module and crate names. Short names like `searcher` stop working once a web search module exists, so the first three say what they work on:
-   - `ava-utils-file-indexer`
-   - `ava-utils-file-searcher`
-   - `ava-utils-file-watcher`
-   - `ava-utils-cli` (its program is just `ava-utils`)
-   - `ava-utils-config`, `ava-utils-codecs` (already in the README)
-   The CLI would then be `ava-utils file-searcher find "*.rs"`.
-   Accept, or give your own names?
-> 
-
-2. Names of the standard messages every module answers: `run-command`, `job-progress`, `job-cancel`.
+1. Names of the standard messages every module answers: `run-command`, `job-progress`, `job-cancel`.
    Accept?
-> 
+>wdym? like, find says "run command index lookup" and indexer goes "job progress: started, job progress: 50% done, job progress: done, heres your file :3" if so, sure. fine by me.
