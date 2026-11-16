@@ -33,6 +33,8 @@ pub enum JobState {
     Done,
     Cancelled,
     Failed,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,6 +54,8 @@ pub struct JobStatus {
 pub enum CancelMode {
     Force,
     Safe,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +140,61 @@ mod tests {
             .body_as()
             .unwrap();
         assert_eq!(back.mode, CancelMode::Safe);
+    }
+
+    #[test]
+    fn states_and_modes_from_the_future_decode_as_unknown() {
+        #[derive(Serialize)]
+        struct NewStatus {
+            job: String,
+            state: String,
+        }
+        let e = Envelope::reply(
+            &Envelope::call(JOB_PROGRESS, &()).unwrap(),
+            &NewStatus {
+                job: "7f3a9c".into(),
+                state: "hibernating".into(),
+            },
+        )
+        .unwrap();
+        let s: JobStatus = e.body_as().unwrap();
+        assert_eq!(
+            (s.state, s.percent, s.detail),
+            (JobState::Unknown, None, None)
+        );
+
+        #[derive(Serialize)]
+        struct NewCancel {
+            job: String,
+            mode: String,
+        }
+        let e = Envelope::call(
+            JOB_CANCEL,
+            &NewCancel {
+                job: "7f3a9c".into(),
+                mode: "gentle".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(e.body_as::<JobCancel>().unwrap().mode, CancelMode::Unknown);
+    }
+
+    #[test]
+    fn known_states_and_modes_still_use_their_plain_names() {
+        for (state, name) in [
+            (JobState::Running, "running"),
+            (JobState::Paused, "paused"),
+            (JobState::Done, "done"),
+            (JobState::Cancelled, "cancelled"),
+            (JobState::Failed, "failed"),
+        ] {
+            let bytes = rmp_serde::to_vec_named(&state).unwrap();
+            assert_eq!(rmp_serde::from_slice::<String>(&bytes).unwrap(), name);
+        }
+        for (mode, name) in [(CancelMode::Force, "force"), (CancelMode::Safe, "safe")] {
+            let bytes = rmp_serde::to_vec_named(&mode).unwrap();
+            assert_eq!(rmp_serde::from_slice::<String>(&bytes).unwrap(), name);
+        }
     }
 
     #[test]

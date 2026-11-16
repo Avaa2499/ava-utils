@@ -185,6 +185,11 @@ impl Jobs {
                 let flag = match mode {
                     CancelMode::Force => FORCE,
                     CancelMode::Safe => SAFE,
+                    CancelMode::Unknown => {
+                        return Err(Error::Usage(
+                            "this module does not know that cancel mode (use safe or force)".into(),
+                        ));
+                    }
                 };
                 r.ctl.cancel.store(flag, Ordering::SeqCst);
                 Ok(())
@@ -290,6 +295,20 @@ mod tests {
     }
 
     #[test]
+    fn an_unknown_cancel_mode_is_refused_and_the_scan_keeps_going() {
+        let (dir, ix) = temp_index("jobs-unknown-mode");
+        let root = tree("jobs-unknown-mode");
+        let jobs = Jobs::new(Arc::new(ix), 1).unwrap();
+        let id = jobs
+            .start_scan(vec![root.to_string_lossy().into_owned()])
+            .unwrap();
+        let _ = jobs.cancel(&id, CancelMode::Unknown);
+        wait_state(&jobs, &id, JobState::Done);
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn only_one_scan_runs_at_a_time() {
         let (dir, ix) = temp_index("jobs-one");
         let root = tree("jobs-one");
@@ -347,6 +366,7 @@ mod tests {
             .unwrap();
         wait_state(&jobs, &id, JobState::Done);
         assert!(jobs.cancel(&id, CancelMode::Safe).is_err());
+        assert!(jobs.cancel(&id, CancelMode::Unknown).is_err());
         assert!(jobs.resume(&id).is_err());
         assert!(jobs.status("nope").is_err());
         assert!(

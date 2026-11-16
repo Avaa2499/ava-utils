@@ -12,6 +12,8 @@ pub enum Kind {
     Reply,
     Error,
     Event,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -89,6 +91,12 @@ impl Envelope {
     }
 
     pub fn into_result(self) -> Result<Envelope> {
+        if self.kind == Kind::Unknown {
+            return Err(Error::Protocol(format!(
+                "{}: message kind not understood by this module",
+                self.name
+            )));
+        }
         if self.kind == Kind::Error {
             let b: ErrorBody = self.body_as()?;
             return Err(Error::Remote {
@@ -117,6 +125,25 @@ mod tests {
         paths: Vec<String>,
         #[serde(default)]
         total_size: Option<u64>,
+    }
+
+    #[test]
+    fn a_kind_from_the_future_decodes_as_unknown_and_is_not_a_success() {
+        #[derive(Serialize)]
+        struct Future {
+            id: String,
+            kind: String,
+            name: String,
+        }
+        let bytes = rmp_serde::to_vec_named(&Future {
+            id: "abc123".into(),
+            kind: "stream".into(),
+            name: "x".into(),
+        })
+        .unwrap();
+        let env = Envelope::decode(&bytes).unwrap();
+        assert_eq!(env.kind, Kind::Unknown);
+        assert!(matches!(env.into_result(), Err(Error::Protocol(_))));
     }
 
     #[test]
