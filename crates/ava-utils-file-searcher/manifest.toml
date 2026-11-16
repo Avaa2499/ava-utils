@@ -1,0 +1,10 @@
+module = "file-searcher"
+answers = ["run-command", "search"]
+
+[[calls]]
+message = "file-lookup"
+module = "file-indexer"
+
+[[commands]]
+name = "find"
+help = "Find files by glob: find <pattern> [--under <folder>] [--limit <n>]"
