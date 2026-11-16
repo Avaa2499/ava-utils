@@ -224,9 +224,24 @@ fn every_message_keeps_its_exact_wire_format() {
         FilesChanged {
             changed: paths(&["/a/1", "/a/2"]),
             removed: paths(&["/a/3"]),
+            ..Default::default()
         },
         FilesChanged::default(),
         &["changed", "removed"],
+        s,
+    );
+    check(
+        "files-changed-cursor",
+        FilesChanged {
+            changed: paths(&["/a/1"]),
+            removed: vec![],
+            epoch: 0x1122_3344_5566_7788,
+            seq: 42,
+            first_seq: 7,
+            roots: paths(&["/a"]),
+        },
+        FilesChanged::default(),
+        &["changed", "removed", "epoch", "seq", "first_seq", "roots"],
         s,
     );
     check(

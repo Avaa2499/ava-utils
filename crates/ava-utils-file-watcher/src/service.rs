@@ -46,14 +46,28 @@ impl Hub {
     }
 
     pub fn emit(&self, batch: &FilesChanged) -> Result<()> {
-        {
+        let event = {
             let mut j = self.journal();
-            j.record(batch);
+            let seq = j.record(batch);
             if j.len() <= EAGER_STATE_MAX {
                 self.publisher.set_state(&j.state())?;
             }
+            FilesChanged {
+                epoch: j.epoch(),
+                seq,
+                ..batch.clone()
+            }
+        };
+        self.publisher.publish(&event)
+    }
+
+    pub fn set_roots(&self, roots: &[String]) -> Result<()> {
+        let mut j = self.journal();
+        j.set_roots(roots.to_vec());
+        if j.len() <= EAGER_STATE_MAX {
+            self.publisher.set_state(&j.state())?;
         }
-        self.publisher.publish(batch)
+        Ok(())
     }
 
     pub fn refresh(&self) -> Result<()> {
@@ -94,6 +108,7 @@ impl Service {
     ) -> Result<(Self, Vec<String>)> {
         let store = Roots::new(state_dir);
         let roots = store.load()?;
+        hub.set_roots(&roots)?;
         let (watch, warnings) = start(&roots, tx.clone())?;
         Ok((
             Self {
@@ -119,6 +134,7 @@ impl Service {
         *watch = None;
         let (new, warnings) = start(&roots, self.tx.clone())?;
         *watch = Some(new);
+        self.hub.set_roots(&roots)?;
         *lock(&self.current) = roots;
         Ok(warnings)
     }
@@ -296,10 +312,89 @@ mod tests {
         let b = FilesChanged {
             changed: vec!["/a".into()],
             removed: vec!["/b".into()],
+            ..Default::default()
         };
         hub.emit(&b).unwrap();
         assert_eq!(hub.publisher.subscribers(), 0);
         assert_eq!(hub.held().0, 2);
+    }
+
+    fn subscribe_to(hub: &Hub) -> (ava_utils_config::topic::Subscription, std::path::PathBuf) {
+        let d = dir("hub-sock");
+        let sock = d.join("w.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+        let publisher = hub.publisher.clone();
+        std::thread::spawn(move || {
+            for conn in listener.incoming() {
+                let mut c = conn.unwrap();
+                let req = ava_utils_config::frame::read_frame(&mut c).unwrap();
+                publisher.attach(&req, c).unwrap();
+            }
+        });
+        (
+            ava_utils_config::topic::subscribe(&sock, "files-changed").unwrap(),
+            d,
+        )
+    }
+
+    fn one(p: &str) -> FilesChanged {
+        FilesChanged {
+            changed: vec![p.into()],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn events_and_state_carry_the_epoch_and_a_counting_sequence() {
+        let hub = test_hub();
+        hub.set_roots(&a(&["/r"])).unwrap();
+        hub.emit(&one("/x")).unwrap();
+        hub.emit(&one("/y")).unwrap();
+        let (mut sub, d) = subscribe_to(&hub);
+        let state: FilesChanged = sub.state.body_as().unwrap();
+        assert_ne!(state.epoch, 0);
+        assert_eq!((state.seq, state.first_seq), (2, 1));
+        assert_eq!(state.roots, ["/r"]);
+        hub.emit(&one("/z")).unwrap();
+        let ev: FilesChanged = sub
+            .next_event(Some(std::time::Duration::from_secs(2)))
+            .unwrap()
+            .body_as()
+            .unwrap();
+        assert_eq!((ev.epoch, ev.seq), (state.epoch, 3));
+        assert_eq!(ev.changed, ["/z"]);
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn two_hubs_have_different_epochs() {
+        let (h1, h2) = (test_hub(), test_hub());
+        h1.emit(&one("/x")).unwrap();
+        h2.emit(&one("/x")).unwrap();
+        let (mut s1, d1) = subscribe_to(&h1);
+        let (mut s2, d2) = subscribe_to(&h2);
+        let e1 = s1.state.body_as::<FilesChanged>().unwrap().epoch;
+        let e2 = s2.state.body_as::<FilesChanged>().unwrap().epoch;
+        assert_ne!(e1, e2);
+        let _ = (
+            &mut s1,
+            &mut s2,
+            std::fs::remove_dir_all(d1),
+            std::fs::remove_dir_all(d2),
+        );
+    }
+
+    #[test]
+    fn changing_the_roots_updates_the_state_new_subscribers_see() {
+        let hub = test_hub();
+        hub.set_roots(&a(&["/one"])).unwrap();
+        hub.set_roots(&a(&["/one", "/two"])).unwrap();
+        let (sub, d) = subscribe_to(&hub);
+        assert_eq!(
+            sub.state.body_as::<FilesChanged>().unwrap().roots,
+            ["/one", "/two"]
+        );
+        let _ = std::fs::remove_dir_all(d);
     }
 
     #[test]
@@ -326,6 +421,7 @@ mod tests {
         hub.emit(&FilesChanged {
             changed: (0..10).map(|i| format!("/{i}")).collect(),
             removed: vec![],
+            ..Default::default()
         })
         .unwrap();
         assert!(

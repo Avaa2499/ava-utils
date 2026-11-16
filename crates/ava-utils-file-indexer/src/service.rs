@@ -264,6 +264,7 @@ mod tests {
         s.files_changed(&FilesChanged {
             changed: vec![f.clone()],
             removed: vec![],
+            ..Default::default()
         })
         .unwrap();
         assert!(s.index.get(&f).unwrap().is_some());

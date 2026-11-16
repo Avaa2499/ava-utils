@@ -93,6 +93,7 @@ mod tests {
             &FilesChanged {
                 changed: vec![f.clone()],
                 removed: vec![],
+                ..Default::default()
             },
         )
         .unwrap();
@@ -104,6 +105,7 @@ mod tests {
             &FilesChanged {
                 changed: vec![f.clone()],
                 removed: vec![],
+                ..Default::default()
             },
         )
         .unwrap();
@@ -122,6 +124,7 @@ mod tests {
             &FilesChanged {
                 changed: vec![f.clone()],
                 removed: vec![],
+                ..Default::default()
             },
         )
         .unwrap();
@@ -131,6 +134,7 @@ mod tests {
             &FilesChanged {
                 changed: vec![f.clone()],
                 removed: vec![],
+                ..Default::default()
             },
         )
         .unwrap();
@@ -150,6 +154,7 @@ mod tests {
             &FilesChanged {
                 changed: vec![folder.clone(), f.clone()],
                 removed: vec![],
+                ..Default::default()
             },
         )
         .unwrap();
@@ -158,6 +163,7 @@ mod tests {
             &FilesChanged {
                 changed: vec![],
                 removed: vec![folder],
+                ..Default::default()
             },
         )
         .unwrap();
@@ -179,6 +185,7 @@ mod tests {
             &FilesChanged {
                 changed: vec![s(&t.join("target/x.o")), "/proc/self/status".into()],
                 removed: vec![],
+                ..Default::default()
             },
         )
         .unwrap();

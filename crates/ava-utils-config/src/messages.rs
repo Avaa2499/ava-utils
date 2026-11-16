@@ -70,6 +70,18 @@ pub struct FilesChanged {
     pub changed: Vec<String>,
     #[serde(default)]
     pub removed: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub epoch: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub seq: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub first_seq: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roots: Vec<String>,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -237,6 +249,7 @@ mod tests {
         let batch = FilesChanged {
             changed: (0..50_000).map(|i| format!("/a/{i}")).collect(),
             removed: vec![],
+            ..Default::default()
         };
         let e = Envelope::event(FILES_CHANGED, &batch).unwrap();
         let back: FilesChanged = Envelope::decode(&e.encode().unwrap())

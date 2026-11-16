@@ -42,6 +42,7 @@ impl Batcher {
         FilesChanged {
             changed: std::mem::take(&mut self.changed).into_iter().collect(),
             removed: std::mem::take(&mut self.removed).into_iter().collect(),
+            ..Default::default()
         }
     }
 }
@@ -77,16 +78,44 @@ pub fn pump(
 pub struct Journal {
     limit: Limit,
     bytes: u64,
-    ops: VecDeque<(String, bool)>,
+    ops: VecDeque<(String, bool, u64)>,
+    epoch: u64,
+    seq: u64,
+    evicted_through: u64,
+    roots: Vec<String>,
 }
 
 impl Journal {
     pub fn new(limit: Limit) -> Self {
+        Self::with_epoch(limit, ava_utils_config::id::new_epoch().unwrap_or(1))
+    }
+
+    pub fn with_epoch(limit: Limit, epoch: u64) -> Self {
         Self {
             limit,
             bytes: 0,
             ops: VecDeque::new(),
+            epoch,
+            seq: 0,
+            evicted_through: 0,
+            roots: Vec::new(),
         }
+    }
+
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    pub fn seq(&self) -> u64 {
+        self.seq
+    }
+
+    pub fn first_seq(&self) -> u64 {
+        self.evicted_through + 1
+    }
+
+    pub fn set_roots(&mut self, roots: Vec<String>) {
+        self.roots = roots;
     }
 
     pub fn len(&self) -> usize {
@@ -110,9 +139,9 @@ impl Journal {
         self.evict();
     }
 
-    fn add(&mut self, path: &str, removed: bool) {
+    fn add(&mut self, path: &str, removed: bool, seq: u64) {
         self.bytes += path.len() as u64 + ENTRY_OVERHEAD;
-        self.ops.push_back((path.to_string(), removed));
+        self.ops.push_back((path.to_string(), removed, seq));
     }
 
     fn evict(&mut self) {
@@ -125,28 +154,40 @@ impl Journal {
                 return;
             }
             match self.ops.pop_front() {
-                Some((p, _)) => self.bytes -= p.len() as u64 + ENTRY_OVERHEAD,
+                Some((p, _, seq)) => {
+                    self.bytes -= p.len() as u64 + ENTRY_OVERHEAD;
+                    self.evicted_through = self.evicted_through.max(seq);
+                }
                 None => return,
             }
         }
     }
 
-    pub fn record(&mut self, batch: &FilesChanged) {
+    pub fn record(&mut self, batch: &FilesChanged) -> u64 {
+        self.seq += 1;
+        let seq = self.seq;
         for p in &batch.removed {
-            self.add(p, true);
+            self.add(p, true, seq);
         }
         for p in &batch.changed {
-            self.add(p, false);
+            self.add(p, false, seq);
         }
         self.evict();
+        seq
     }
 
     pub fn state(&self) -> FilesChanged {
         let mut last: BTreeMap<&str, bool> = BTreeMap::new();
-        for (p, removed) in &self.ops {
+        for (p, removed, _) in &self.ops {
             last.insert(p.as_str(), *removed);
         }
-        let mut out = FilesChanged::default();
+        let mut out = FilesChanged {
+            epoch: self.epoch,
+            seq: self.seq,
+            first_seq: self.first_seq(),
+            roots: self.roots.clone(),
+            ..Default::default()
+        };
         for (p, removed) in last {
             if removed {
                 out.removed.push(p.to_string());
@@ -246,10 +287,12 @@ mod tests {
         j.record(&FilesChanged {
             changed: vec!["/a".into(), "/b".into()],
             removed: vec![],
+            ..Default::default()
         });
         j.record(&FilesChanged {
             changed: vec![],
             removed: vec!["/a".into()],
+            ..Default::default()
         });
         let s = j.state();
         assert_eq!(s.removed, ["/a"]);
@@ -257,6 +300,7 @@ mod tests {
         j.record(&FilesChanged {
             changed: vec!["/c".into(), "/d".into()],
             removed: vec![],
+            ..Default::default()
         });
         assert_eq!(j.state().changed, ["/c", "/d"]);
     }
@@ -268,6 +312,7 @@ mod tests {
         let batch = FilesChanged {
             changed: (0..10).map(|i| format!("/{i}")).collect(),
             removed: vec![],
+            ..Default::default()
         };
         j.record(&batch);
         assert_eq!(j.len(), 3);
@@ -278,5 +323,82 @@ mod tests {
         j.set_limit(Limit::Count(100));
         j.record(&batch);
         assert_eq!(j.len(), 11);
+    }
+
+    fn batch_of(paths: &[&str]) -> FilesChanged {
+        FilesChanged {
+            changed: paths.iter().map(|p| p.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_journal_numbers_each_batch_and_starts_with_everything_covered() {
+        let mut j = Journal::with_epoch(Limit::Count(100), 9);
+        assert_eq!((j.epoch(), j.seq(), j.first_seq()), (9, 0, 1));
+        assert_eq!(j.record(&batch_of(&["/a", "/b"])), 1);
+        assert_eq!(j.record(&batch_of(&["/c"])), 2);
+        assert_eq!((j.seq(), j.first_seq()), (2, 1));
+        let s = j.state();
+        assert_eq!((s.epoch, s.seq, s.first_seq), (9, 2, 1));
+    }
+
+    #[test]
+    fn evicting_part_of_a_batch_means_that_batch_is_no_longer_fully_covered() {
+        let mut j = Journal::with_epoch(Limit::Count(3), 1);
+        j.record(&batch_of(&["/a", "/b"]));
+        assert_eq!(j.first_seq(), 1);
+        j.record(&batch_of(&["/c", "/d"]));
+        assert_eq!(j.len(), 3);
+        assert_eq!(
+            j.first_seq(),
+            2,
+            "batch 1 lost an entry, so only batches after it are complete"
+        );
+        j.record(&batch_of(&["/e", "/f"]));
+        assert_eq!(j.first_seq(), 3);
+    }
+
+    #[test]
+    fn a_single_batch_bigger_than_the_limit_is_never_fully_covered() {
+        let mut j = Journal::with_epoch(Limit::Count(2), 1);
+        let seq = j.record(&batch_of(&["/a", "/b", "/c", "/d"]));
+        assert_eq!(seq, 1);
+        assert_eq!(j.first_seq(), 2);
+        assert!(
+            j.first_seq() > j.seq(),
+            "even a subscriber that has seen nothing cannot be caught up from the journal"
+        );
+    }
+
+    #[test]
+    fn shrinking_the_limit_moves_first_seq_forward() {
+        let mut j = Journal::with_epoch(Limit::Count(100), 1);
+        j.record(&batch_of(&["/a"]));
+        j.record(&batch_of(&["/b"]));
+        j.record(&batch_of(&["/c"]));
+        j.set_limit(Limit::Count(1));
+        assert_eq!(j.first_seq(), 3);
+        j.set_limit(Limit::Count(100));
+        assert_eq!(
+            j.first_seq(),
+            3,
+            "a bigger limit cannot bring evicted entries back"
+        );
+    }
+
+    #[test]
+    fn the_roots_are_part_of_the_state() {
+        let mut j = Journal::with_epoch(Limit::Count(10), 1);
+        assert!(j.state().roots.is_empty());
+        j.set_roots(vec!["/r".into()]);
+        assert_eq!(j.state().roots, ["/r"]);
+    }
+
+    #[test]
+    fn a_fresh_journal_picks_a_random_epoch() {
+        let a = Journal::new(Limit::Count(1));
+        let b = Journal::new(Limit::Count(1));
+        assert!(a.epoch() != 0 && a.epoch() != b.epoch());
     }
 }

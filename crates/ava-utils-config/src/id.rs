@@ -10,6 +10,17 @@ pub fn new_request_id() -> Result<String> {
     random_hex(8)
 }
 
+pub fn new_epoch() -> Result<u64> {
+    loop {
+        let mut buf = [0u8; 8];
+        getrandom::fill(&mut buf).map_err(|e| Error::Protocol(format!("no randomness: {e}")))?;
+        let n = u64::from_le_bytes(buf);
+        if n != 0 {
+            return Ok(n);
+        }
+    }
+}
+
 pub fn new_job_id() -> Result<String> {
     random_hex(3)
 }
@@ -17,6 +28,13 @@ pub fn new_job_id() -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn epochs_are_never_zero_and_differ() {
+        let a = new_epoch().unwrap();
+        let b = new_epoch().unwrap();
+        assert!(a != 0 && b != 0 && a != b);
+    }
 
     #[test]
     fn job_ids_are_six_hex_chars() {
