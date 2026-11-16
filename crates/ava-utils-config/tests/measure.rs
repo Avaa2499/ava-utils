@@ -88,7 +88,14 @@ fn measure_files_changed_encoding_cost() {
 
     // Print results
     eprintln!("\n=== Measured cost: FilesChanged with 50,000 paths (~60 bytes each) ===");
-    eprintln!("Profile: debug (cargo test default)");
+    eprintln!(
+        "Profile: {}",
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        }
+    );
     eprintln!("Runs: {} (median reported)", RUNS);
     eprintln!();
     eprintln!("Named boxes (Envelope::encode):");

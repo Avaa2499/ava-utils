@@ -51,14 +51,16 @@ Every module follows these. No exceptions, ever.
 
 ### Measured cost
 
-A `FilesChanged` batch of 50,000 paths (~60 bytes each) encoded with named boxes via `Envelope::encode` (the current approach) vs. a plain array of strings:
+A `FilesChanged` batch of 50,000 paths (~60 bytes each), median of 20 runs. Named boxes are `Envelope::encode`; the plain array is the same paths as one array of strings. Run: `cargo test [--release] -p ava-utils-config --test measure -- --ignored --nocapture`.
 
-| Format | Encode (median) | Decode (median) | Size |
-|---|---|---|---|
-| Named boxes (Envelope) | 6.71 ms | 27.24 ms | 3.19 MiB |
-| Plain array of strings | 6.76 ms | 8.65 ms | 3.19 MiB |
+| Profile | Format | Encode | Decode | Size |
+|---|---|---|---|---|
+| debug | Named boxes | 6.8 ms | 27.4 ms | 3,350,077 bytes |
+| debug | Plain array | 6.8 ms | 8.4 ms | 3,350,003 bytes |
+| release | Named boxes | 0.41 ms | 5.4 ms | 3,350,077 bytes |
+| release | Plain array | 0.40 ms | 1.1 ms | 3,350,003 bytes |
 
-Overhead of named boxes: encode ~0%, decode +215% (~18.6 ms), size +0.0% (74 bytes). Profile: debug (default `cargo test`). Run with `cargo test -p ava-utils-config --test measure -- --ignored --nocapture`.
+The names cost 74 bytes per message (0.002%); the path strings dominate the size. Encoding costs the same. Decoding the named form is about 4 to 5 times slower, because the body is first parsed into a generic value and then into the typed message: 5.4 ms against 1.1 ms in release for 50,000 paths, still far below the 5 s reply limit, so the format stays as it is.
 
 ## Message ownership
 
