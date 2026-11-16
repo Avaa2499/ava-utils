@@ -46,4 +46,3 @@ set up nvidia and openrouter free ai models. some are incredibly good, and it al
 Answer on the "> " line. Blank = not accepted. Answered ones move to README.md.
 
 (none open right now)
-> 
