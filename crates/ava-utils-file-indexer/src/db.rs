@@ -13,6 +13,7 @@ pub(crate) const FOLDER_SIZES: TableDefinition<&str, u64> = TableDefinition::new
 pub(crate) const EXCLUSIONS: TableDefinition<&str, ()> = TableDefinition::new("exclusions");
 pub(crate) const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 pub(crate) const JOBS: TableDefinition<&str, &[u8]> = TableDefinition::new("jobs");
+pub(crate) const ROOTS: TableDefinition<&str, u64> = TableDefinition::new("roots");
 pub(crate) const FRONTIER: TableDefinition<&str, ()> = TableDefinition::new("frontier");
 
 pub fn db_err<E: std::error::Error + Send + Sync + 'static>(e: E) -> Error {
@@ -109,6 +110,7 @@ impl Index {
             w.open_table(EXCLUSIONS).map_err(db_err)?;
             w.open_table(JOBS).map_err(db_err)?;
             w.open_table(FRONTIER).map_err(db_err)?;
+            w.open_table(ROOTS).map_err(db_err)?;
             let mut meta = w.open_table(META).map_err(db_err)?;
             let have = meta.get("schema").map_err(db_err)?.map(|g| g.value());
             match have {
@@ -396,11 +398,30 @@ impl Index {
         w.commit().map_err(db_err)
     }
 
-    pub fn remove_meta(&self, key: &str) -> Result<()> {
+    pub fn scanned_roots(&self) -> Result<Vec<String>> {
+        let r = self.db.begin_read().map_err(db_err)?;
+        let t = r.open_table(ROOTS).map_err(db_err)?;
+        let mut out = Vec::new();
+        for row in t.iter().map_err(db_err)? {
+            out.push(row.map_err(db_err)?.0.value().to_string());
+        }
+        Ok(out)
+    }
+
+    pub fn mark_root(&self, root: &str) -> Result<()> {
         let w = self.db.begin_write().map_err(db_err)?;
-        w.open_table(META)
+        w.open_table(ROOTS)
             .map_err(db_err)?
-            .remove(key)
+            .insert(root, 1)
+            .map_err(db_err)?;
+        w.commit().map_err(db_err)
+    }
+
+    pub fn unmark_root(&self, root: &str) -> Result<()> {
+        let w = self.db.begin_write().map_err(db_err)?;
+        w.open_table(ROOTS)
+            .map_err(db_err)?
+            .remove(root)
             .map_err(db_err)?;
         w.commit().map_err(db_err)
     }

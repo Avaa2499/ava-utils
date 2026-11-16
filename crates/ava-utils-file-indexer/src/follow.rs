@@ -34,13 +34,10 @@ pub struct Tracker {
     known: Vec<String>,
 }
 
-fn root_key(root: &str) -> String {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in root.bytes() {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x0100_0000_01b3);
-    }
-    format!("root-scanned-{h:016x}")
+fn covered_by(path: &str, roots: &[String]) -> bool {
+    roots
+        .iter()
+        .any(|r| path == r || path.starts_with(&format!("{}/", r.trim_end_matches('/'))))
 }
 
 impl Tracker {
@@ -56,18 +53,27 @@ impl Tracker {
         }
     }
 
-    fn is_scanned(&self, root: &str) -> Result<bool> {
-        Ok(self.index.meta(&root_key(root))?.is_some())
+    fn unscanned(&self, roots: &[String]) -> Result<Vec<String>> {
+        let done = self.index.scanned_roots()?;
+        Ok(roots
+            .iter()
+            .filter(|r| !done.contains(r))
+            .cloned()
+            .collect())
     }
 
-    fn unscanned(&self, roots: &[String]) -> Result<Vec<String>> {
-        let mut out = Vec::new();
-        for r in roots {
-            if !self.is_scanned(r)? {
-                out.push(r.clone());
+    fn forget_unwatched(&self, roots: &[String]) -> Result<u64> {
+        let mut removed = 0;
+        for gone in self.index.scanned_roots()? {
+            if roots.contains(&gone) {
+                continue;
             }
+            if !covered_by(&gone, roots) {
+                removed += self.index.remove_tree(&gone)?;
+            }
+            self.index.unmark_root(&gone)?;
         }
-        Ok(out)
+        Ok(removed)
     }
 
     pub fn session(&self) -> u64 {
@@ -82,6 +88,9 @@ impl Tracker {
         self.last_seq = state.seq;
         self.known = state.roots.clone();
         self.pending.clear();
+        if !state.roots.is_empty() {
+            self.forget_unwatched(&state.roots)?;
+        }
         let covered = state.epoch != 0
             && cursor_epoch == state.epoch
             && cursor_seq <= state.seq
@@ -114,13 +123,13 @@ impl Tracker {
         Next::Gap
     }
 
-    pub fn new_roots(&mut self, roots: &[String]) -> Result<Vec<String>> {
-        if roots.is_empty() && self.known.is_empty() {
+    pub fn new_roots(&mut self, ev: &FilesChanged) -> Result<Vec<String>> {
+        let roots = ev.roots.as_slice();
+        let announces_nothing = ev.changed.is_empty() && ev.removed.is_empty();
+        if roots.is_empty() && (self.known.is_empty() || !announces_nothing) {
             return Ok(Vec::new());
         }
-        for gone in self.known.iter().filter(|k| !roots.contains(k)) {
-            self.index.remove_meta(&root_key(gone))?;
-        }
+        self.forget_unwatched(roots)?;
         self.known = roots.to_vec();
         let mut fresh = Vec::new();
         for r in self.unscanned(roots)? {
@@ -150,7 +159,7 @@ impl Tracker {
             return Ok(false);
         }
         for r in roots {
-            self.index.set_meta(&root_key(r), 1)?;
+            self.index.mark_root(r)?;
         }
         self.pending.retain(|p| !roots.contains(p));
         if self.pending.is_empty() {
@@ -515,6 +524,15 @@ mod tests {
         let _ = (std::fs::remove_dir_all(d), std::fs::remove_dir_all(root));
     }
 
+    fn announce(roots: &[&str]) -> FilesChanged {
+        FilesChanged {
+            epoch: 5,
+            seq: 4,
+            roots: roots.iter().map(|x| x.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
     fn r(s: &[&str]) -> Vec<String> {
         s.iter().map(|x| x.to_string()).collect()
     }
@@ -538,10 +556,15 @@ mod tests {
         let (d, _ix, mut t) = tracker("fo-live-root");
         t.begin(&state(5, 3, 1, &["/old"])).unwrap();
         t.caught_up(t.session()).unwrap();
-        assert!(t.new_roots(&r(&["/old"])).unwrap().is_empty());
-        assert_eq!(t.new_roots(&r(&["/old", "/new"])).unwrap(), r(&["/new"]));
+        assert!(t.new_roots(&announce(&["/old"])).unwrap().is_empty());
+        assert_eq!(
+            t.new_roots(&announce(&["/old", "/new"])).unwrap(),
+            r(&["/new"])
+        );
         assert!(
-            t.new_roots(&r(&["/old", "/new"])).unwrap().is_empty(),
+            t.new_roots(&announce(&["/old", "/new"]))
+                .unwrap()
+                .is_empty(),
             "already being scanned"
         );
         let _ = std::fs::remove_dir_all(d);
@@ -552,7 +575,10 @@ mod tests {
         let (d, ix, mut t) = tracker("fo-crash-root");
         t.begin(&state(5, 3, 1, &["/old"])).unwrap();
         t.caught_up(t.session()).unwrap();
-        assert_eq!(t.new_roots(&r(&["/old", "/new"])).unwrap(), r(&["/new"]));
+        assert_eq!(
+            t.new_roots(&announce(&["/old", "/new"])).unwrap(),
+            r(&["/new"])
+        );
         assert_eq!(t.event(&event(5, 4)), Next::Apply);
         t.mark_applied().unwrap();
         drop(t);
@@ -599,8 +625,8 @@ mod tests {
         let (d, _ix, mut t) = tracker("fo-readd");
         t.begin(&state(5, 3, 1, &["/a", "/b"])).unwrap();
         t.caught_up(t.session()).unwrap();
-        assert!(t.new_roots(&r(&["/a"])).unwrap().is_empty());
-        assert_eq!(t.new_roots(&r(&["/a", "/b"])).unwrap(), r(&["/b"]));
+        assert!(t.new_roots(&announce(&["/a"])).unwrap().is_empty());
+        assert_eq!(t.new_roots(&announce(&["/a", "/b"])).unwrap(), r(&["/b"]));
         let _ = std::fs::remove_dir_all(d);
     }
 
@@ -618,6 +644,115 @@ mod tests {
             scan_of(&["/definitely/not/here"]),
             "it is tried again on the next connect"
         );
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    fn fill(ix: &Index, paths: &[&str]) {
+        let entries: Vec<_> = paths
+            .iter()
+            .map(|p| crate::db::entry(p, 1, false))
+            .collect();
+        ix.upsert(&entries).unwrap();
+    }
+
+    fn has(ix: &Index, p: &str) -> bool {
+        ix.get(p).unwrap().is_some()
+    }
+
+    #[test]
+    fn removing_a_root_while_connected_deletes_its_files_from_the_index_and_nothing_else() {
+        let (d, ix, mut t) = tracker("fo-rm-live");
+        t.begin(&state(5, 3, 1, &["/a", "/b"])).unwrap();
+        t.caught_up(t.session()).unwrap();
+        fill(&ix, &["/a/1", "/a/2", "/b/1", "/other/1"]);
+        assert!(t.new_roots(&announce(&["/a"])).unwrap().is_empty());
+        assert!(has(&ix, "/a/1") && has(&ix, "/a/2"));
+        assert!(!has(&ix, "/b/1"));
+        assert!(
+            has(&ix, "/other/1"),
+            "files outside every root are not ours to touch"
+        );
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn a_root_removed_while_the_indexer_was_down_is_cleaned_up_on_the_next_connect() {
+        let (d, ix, mut t) = tracker("fo-rm-down");
+        t.begin(&state(5, 3, 1, &["/a", "/b"])).unwrap();
+        t.caught_up(t.session()).unwrap();
+        fill(&ix, &["/a/1", "/b/1"]);
+        drop(t);
+        let mut t2 = Tracker::new(ix.clone());
+        t2.begin(&state(5, 3, 1, &["/a"])).unwrap();
+        assert!(has(&ix, "/a/1") && !has(&ix, "/b/1"));
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn a_folder_still_covered_by_another_root_keeps_its_files() {
+        let (d, ix, mut t) = tracker("fo-rm-nested");
+        t.begin(&state(5, 3, 1, &["/a", "/a/inner"])).unwrap();
+        t.caught_up(t.session()).unwrap();
+        fill(&ix, &["/a/inner/1", "/a/2"]);
+        t.new_roots(&announce(&["/a"])).unwrap();
+        assert!(has(&ix, "/a/inner/1") && has(&ix, "/a/2"));
+        assert!(t.new_roots(&announce(&["/a"])).unwrap().is_empty());
+        assert_eq!(
+            t.new_roots(&announce(&["/a", "/a/inner"])).unwrap(),
+            r(&["/a/inner"]),
+            "added back, it is scanned again; harmless, the files stay"
+        );
+        assert!(has(&ix, "/a/inner/1"));
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn a_sibling_with_a_similar_name_is_not_treated_as_covered() {
+        assert!(covered_by("/a/b", &r(&["/a"])));
+        assert!(covered_by("/a", &r(&["/a"])));
+        assert!(!covered_by("/ab", &r(&["/a"])));
+        assert!(!covered_by("/a", &r(&["/a/b"])));
+    }
+
+    #[test]
+    fn an_event_from_an_older_watcher_with_no_roots_never_wipes_the_index() {
+        let (d, ix, mut t) = tracker("fo-old-watcher");
+        t.begin(&state(5, 3, 1, &["/a"])).unwrap();
+        t.caught_up(t.session()).unwrap();
+        fill(&ix, &["/a/1"]);
+        let old_style = FilesChanged {
+            epoch: 5,
+            seq: 4,
+            changed: vec!["/a/2".into()],
+            ..Default::default()
+        };
+        assert!(t.new_roots(&old_style).unwrap().is_empty());
+        assert!(has(&ix, "/a/1"));
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn a_start_up_state_with_no_roots_never_wipes_the_index() {
+        let (d, ix, mut t) = tracker("fo-empty-start");
+        t.begin(&state(5, 3, 1, &["/a"])).unwrap();
+        t.caught_up(t.session()).unwrap();
+        fill(&ix, &["/a/1"]);
+        drop(t);
+        Tracker::new(ix.clone())
+            .begin(&state(6, 1, 1, &[]))
+            .unwrap();
+        assert!(has(&ix, "/a/1"));
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn removing_the_last_root_on_purpose_clears_it() {
+        let (d, ix, mut t) = tracker("fo-last");
+        t.begin(&state(5, 3, 1, &["/a"])).unwrap();
+        t.caught_up(t.session()).unwrap();
+        fill(&ix, &["/a/1"]);
+        t.new_roots(&announce(&[])).unwrap();
+        assert!(!has(&ix, "/a/1"));
         let _ = std::fs::remove_dir_all(d);
     }
 }

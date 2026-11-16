@@ -135,7 +135,7 @@ fn follow_producer(service: Arc<Service>, dirs: Dirs) {
                             }
                             let (saved, fresh, session) = {
                                 let mut t = tracker.lock().unwrap_or_else(|e| e.into_inner());
-                                (t.mark_applied(), t.new_roots(&batch.roots), t.session())
+                                (t.mark_applied(), t.new_roots(&batch), t.session())
                             };
                             if let Err(e) = saved {
                                 eprintln!("{MODULE}: could not save the watcher position: {e}");
