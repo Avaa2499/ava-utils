@@ -179,6 +179,9 @@ impl Jobs {
     }
 
     pub fn cancel(&self, id: &str, mode: CancelMode) -> Result<()> {
+        if load(&self.index, id)?.state != JobState::Running {
+            return Err(Error::Usage(format!("job {id} is not running")));
+        }
         let g = self.running();
         match g.as_ref() {
             Some(r) if r.id == id => {
@@ -306,6 +309,27 @@ mod tests {
         wait_state(&jobs, &id, JobState::Done);
         let _ = std::fs::remove_dir_all(dir);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cancelling_a_job_whose_record_says_done_is_refused_even_if_the_thread_is_still_exiting() {
+        let (dir, ix) = temp_index("jobs-cancel-done");
+        let ix = Arc::new(ix);
+        let rec = JobRecord {
+            id: "d0ne01".into(),
+            roots: vec![],
+            generation: 1,
+            state: JobState::Done,
+            entries: 0,
+            dirs: 0,
+            error: None,
+            updated: 1,
+        };
+        save(&ix, &rec).unwrap();
+        let jobs = Jobs::new(ix, 1).unwrap();
+        let e = jobs.cancel("d0ne01", CancelMode::Safe).unwrap_err();
+        assert!(e.to_string().contains("not running"), "{e}");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
