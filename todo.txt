@@ -20,6 +20,11 @@ Scoring:
 USER ADDED, WANTS THESE DONE FIRST:
 review over everything in /reviews/ and add everything to this file if needed. delete each review when its been written here and action has been taken against it.
 set up nvidia and openrouter free ai models. some are incredibly good, and it allows for more ai models (subagents) to work at the same time, speeding up development.
+https://openrouter.ai/models?variant=free
+/home/ava/OPENROUTERAPI.txt
+
+nvidia api:
+(key is in /home/ava/NVIDIAAPI.txt, outside this repo; it expires 05/16/2027)
 
 1. [8] Indexer goes stale silently after missed changes
    From the reviews. If the watcher or indexer is down while files change, nothing reconciles the index; the watcher journal only holds the last N changes.
