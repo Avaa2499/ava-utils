@@ -49,6 +49,22 @@ Every module follows these. No exceptions, ever.
 - Codecs: `ava-utils-codecs` is a shared crate, not a module. It uses the codec libraries already installed on the system (libavcodec, libdav1d, libvpx, libopus), so the heavy code exists once. Video playback, audio playback and convert-file (e.g. .mkv → .mp4) build it in.
 - Never two modules doing the same thing. This is a design rule, not an install check. Install only checks loops, manifests and tests.
 
+## Message ownership
+
+- The rule: every message and topic is defined in `crates/ava-utils-config/src/messages.rs` and has exactly one owning module: the module that answers the call or sends the topic. The standard messages are the exception in form only: every module answers `run-command`, and each module with long jobs answers `job-progress` and `job-cancel`, with the same meaning everywhere. The owner decides what the message means. Other modules only use it. A change to meaning is made by the owner.
+
+| Message | Kind | Owner | Users today |
+|---|---|---|---|
+| run-command | call | every module (standard) | `au`, the install crash test, each module's watchdog probe |
+| job-progress | call | any module with long jobs (today: file-indexer) | none yet (`au file-indexer progress` goes through `run-command`) |
+| job-cancel | call | any module with long jobs (today: file-indexer) | none yet (`au file-indexer cancel` goes through `run-command`) |
+| files-changed | topic | file-watcher | file-indexer |
+| file-lookup | call | file-indexer | file-searcher |
+| search | call | file-searcher | none yet (`au file-searcher find` goes through `run-command`) |
+| watch-set-roots | call | file-watcher | none yet (`au file-watcher add` goes through `run-command`) |
+
+- When adding a message, add its row here.
+
 ## Message format (frozen)
 
 Frozen once three modules worked together. The exact wire bytes of every message and the envelope are saved in `crates/ava-utils-config/tests/golden/`, and a test fails if they change.
