@@ -19,7 +19,7 @@ Scoring:
 
 USER ADDED, WANTS THESE DONE FIRST:
 review over everything in /reviews/ and add everything to this file if needed. delete each review when its been written here and action has been taken against it.
-set up nvidia and openrouter free ai models. some are incredibly good, and it allows for more ai models (subagents) to work at the same time.
+set up nvidia and openrouter free ai models. some are incredibly good, and it allows for more ai models (subagents) to work at the same time, speeding up development.
 
 1. [8] Indexer goes stale silently after missed changes
    From the reviews. If the watcher or indexer is down while files change, nothing reconciles the index; the watcher journal only holds the last N changes.
@@ -39,10 +39,40 @@ set up nvidia and openrouter free ai models. some are incredibly good, and it al
    `RestartSteps=` and `RestartMaxDelaySec=` need systemd 254 or newer; only 259 is verified. Add this to the Platform and Fault containment sections.
    Done when: the README names the minimum.
 
+5. [6] Check a topic's state or a batch bigger than the 16 MiB frame limit is split, not dropped
+   From the reviews (gemini, qwen4max). Unverified: the watcher's state-on-subscribe with a very large journal (e.g. the 18gb setting), and any event batch over 16 MiB.
+   Done when: tests send a state and a batch over the limit and every entry still arrives, in several frames.
+
+6. [5] Check sccache hits across worktrees
+   From the reviews (qwen4max). Absolute paths in debug info can make parallel worktrees miss the cache.
+   Done when: a second worktree builds mostly from cache, or the build uses `--remap-path-prefix` / lower debuginfo so it does.
+
+7. [3] README: one owner per message
+   From the reviews (copilot). Write the rule that every message and topic is defined and owned by one module, so drift is visible.
+   Done when: the README states it and lists the current owner of each message.
+
+8. [2] `au status`
+   From the reviews (qwen4max, gemma, others). Show which modules are running, their active jobs, subscriber counts and queue depths, without starting anything that is stopped.
+   Done when: `au status` prints one line per installed module.
+
+9. [2] Retry jitter
+   From the reviews (chatgpt). Add a small random spread to reconnect retries so subscribers do not all reconnect at the same instant.
+   Done when: the retry delays vary within a bound and the 2s / 2min / 5min schedule still holds, with tests.
+
+10. [2] Pass file handles over sockets (SCM_RIGHTS)
+   From the reviews (gemini, qwen4max). Stops a file being deleted or moved while another module reads it. The README defers this until a module first needs it; compression is the likely first.
+   Done when: a call can hand over an open file, with tests for a deleted-after-handover file.
+
+11. [1] Measure the cost of named boxes in MessagePack
+   From the reviews (copilot, random). The format is frozen, so this is only a measurement.
+   Done when: the README records bytes and time per message for a 50,000-path batch.
+
+Reviews to delete once their items above are done: chatgptreview (1, 2), copilotreview (7, 11), geminireview (3, 5, 10), gemma-26ba4breview (8), qwen4maxreview (1, 2, 3, 5, 6, 8, 10), randomaireview (1).
 
 
 # Open questions
 
 Answer on the "> " line. Blank = not accepted. Answered ones move to README.md.
 
-(none open right now)
+Q1. Nothing starts at login, so after a fresh login the file-watcher is not watching and nothing is indexed until someone runs a command (from the reviews, qwen4max). Item 1 makes the indexer catch up when it starts, but changes stay unseen until then. Options: keep it as is, or enable only the listening sockets (watcher, indexer) at login.
+> 
