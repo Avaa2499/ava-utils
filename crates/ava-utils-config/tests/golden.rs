@@ -120,6 +120,7 @@ fn envelope(kind: Kind, name: &str, body: Value) -> Envelope {
         kind,
         name: name.into(),
         body,
+        hops: 0,
     }
 }
 
@@ -309,6 +310,16 @@ fn every_message_keeps_its_exact_wire_format() {
             s,
         );
     }
+    check(
+        "envelope-event-hops",
+        Envelope {
+            hops: 3,
+            ..envelope(Kind::Event, "files-changed", Value::Nil)
+        },
+        envelope(Kind::Event, "files-changed", Value::Nil),
+        &["body", "hops"],
+        s,
+    );
     let error = Envelope::error(&call, "bad-request", "usage: scan <folder>").unwrap();
     check(
         "envelope-error",

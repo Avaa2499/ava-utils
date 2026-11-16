@@ -9,7 +9,7 @@ use std::time::Duration;
 use rmpv::Value;
 use serde::Serialize;
 
-use crate::envelope::{Envelope, Kind};
+use crate::envelope::{Envelope, Kind, MAX_HOPS};
 use crate::error::{Error, Result};
 use crate::frame::{read_frame, write_frame};
 use crate::id::new_request_id;
@@ -78,11 +78,25 @@ impl Publisher {
     }
 
     pub fn publish<T: Serialize>(&self, event: &T) -> Result<()> {
+        self.send(event, 0).map(|_| ())
+    }
+
+    pub fn publish_caused_by<T: Serialize>(&self, cause: &Envelope, event: &T) -> Result<bool> {
+        let hops = cause.hops.saturating_add(1);
+        if hops > MAX_HOPS {
+            return Ok(false);
+        }
+        self.send(event, hops)?;
+        Ok(true)
+    }
+
+    fn send<T: Serialize>(&self, event: &T, hops: u8) -> Result<()> {
         let env = Envelope {
             id: new_request_id()?,
             kind: Kind::Event,
             name: self.topic.clone(),
             body: to_value(event)?,
+            hops,
         };
         let mut inner = self.lock();
         inner.subs.retain(|sub| match sub.tx.try_send(env.clone()) {
@@ -106,6 +120,7 @@ impl Publisher {
                 kind: Kind::Reply,
                 name: request.name.clone(),
                 body: inner.state.clone(),
+                hops: 0,
             };
             tx.try_send(first)
                 .map_err(|_| Error::Protocol("subscriber queue refused the state".into()))?;
@@ -147,8 +162,18 @@ pub fn subscribe(socket: &Path, topic: &str) -> Result<Subscription> {
 
 impl Subscription {
     pub fn next_event(&mut self, wait: Option<Duration>) -> Result<Envelope> {
-        self.stream.set_read_timeout(wait)?;
-        read_frame(&mut self.stream)
+        let deadline = wait.map(|w| std::time::Instant::now() + w);
+        loop {
+            let left = deadline.map(|d| d.saturating_duration_since(std::time::Instant::now()));
+            if left == Some(Duration::ZERO) {
+                return Err(Error::Timeout);
+            }
+            self.stream.set_read_timeout(left)?;
+            let event = read_frame(&mut self.stream)?;
+            if event.hops <= MAX_HOPS {
+                return Ok(event);
+            }
+        }
     }
 }
 
@@ -186,6 +211,72 @@ mod tests {
             assert!(t.elapsed() < Duration::from_secs(5), "timed out");
             thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    fn event_at(hops: u8) -> Envelope {
+        Envelope {
+            hops,
+            ..Envelope::event("files-changed", &()).unwrap()
+        }
+    }
+
+    #[test]
+    fn a_plain_event_starts_at_zero_hops_and_a_caused_one_adds_one() {
+        let (_d, sock, p) = setup(8, Duration::from_secs(1));
+        let mut sub = subscribe(&sock, "files-changed").unwrap();
+        wait_for(|| p.subscribers() == 1);
+        p.publish(&1u32).unwrap();
+        assert_eq!(
+            sub.next_event(Some(Duration::from_secs(2))).unwrap().hops,
+            0
+        );
+        assert!(p.publish_caused_by(&event_at(4), &2u32).unwrap());
+        assert_eq!(
+            sub.next_event(Some(Duration::from_secs(2))).unwrap().hops,
+            5
+        );
+    }
+
+    #[test]
+    fn an_event_past_the_hop_limit_is_dropped_by_the_publisher() {
+        let (_d, sock, p) = setup(8, Duration::from_secs(1));
+        let mut sub = subscribe(&sock, "files-changed").unwrap();
+        wait_for(|| p.subscribers() == 1);
+        assert!(p.publish_caused_by(&event_at(MAX_HOPS - 1), &1u32).unwrap());
+        assert!(!p.publish_caused_by(&event_at(MAX_HOPS), &2u32).unwrap());
+        assert!(!p.publish_caused_by(&event_at(u8::MAX), &3u32).unwrap());
+        assert_eq!(
+            sub.next_event(Some(Duration::from_secs(2))).unwrap().hops,
+            MAX_HOPS
+        );
+        assert!(matches!(
+            sub.next_event(Some(Duration::from_millis(200))),
+            Err(Error::Timeout) | Err(Error::Io(_))
+        ));
+    }
+
+    #[test]
+    fn a_subscriber_skips_events_that_arrive_over_the_hop_limit() {
+        let (_d, sock, p) = setup(8, Duration::from_secs(1));
+        let mut sub = subscribe(&sock, "files-changed").unwrap();
+        wait_for(|| p.subscribers() == 1);
+        p.send(&1u32, MAX_HOPS + 1).unwrap();
+        p.send(&2u32, 200).unwrap();
+        p.send(&3u32, MAX_HOPS).unwrap();
+        let got = sub.next_event(Some(Duration::from_secs(2))).unwrap();
+        assert_eq!(got.hops, MAX_HOPS);
+        assert_eq!(got.body_as::<u32>().unwrap(), 3);
+    }
+
+    #[test]
+    fn the_wait_covers_the_whole_skipping_not_each_event() {
+        let (_d, sock, p) = setup(8, Duration::from_secs(1));
+        let mut sub = subscribe(&sock, "files-changed").unwrap();
+        wait_for(|| p.subscribers() == 1);
+        p.send(&1u32, MAX_HOPS + 1).unwrap();
+        let t = Instant::now();
+        assert!(sub.next_event(Some(Duration::from_millis(300))).is_err());
+        assert!(t.elapsed() < Duration::from_secs(2));
     }
 
     #[test]

@@ -23,6 +23,14 @@ pub struct Envelope {
     pub name: String,
     #[serde(default = "nil")]
     pub body: Value,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub hops: u8,
+}
+
+pub const MAX_HOPS: u8 = 16;
+
+fn is_zero(n: &u8) -> bool {
+    *n == 0
 }
 
 fn nil() -> Value {
@@ -49,6 +57,7 @@ impl Envelope {
             kind: Kind::Call,
             name: name.to_string(),
             body: to_body(body)?,
+            hops: 0,
         })
     }
 
@@ -58,6 +67,7 @@ impl Envelope {
             kind: Kind::Call,
             name: name.to_string(),
             body: to_body(body)?,
+            hops: 0,
         })
     }
 
@@ -67,6 +77,7 @@ impl Envelope {
             kind: Kind::Event,
             name: name.to_string(),
             body: to_body(body)?,
+            hops: 0,
         })
     }
 
@@ -76,6 +87,7 @@ impl Envelope {
             kind: Kind::Reply,
             name: to.name.clone(),
             body: to_body(body)?,
+            hops: 0,
         })
     }
 
@@ -88,6 +100,7 @@ impl Envelope {
                 code: code.to_string(),
                 message: message.to_string(),
             })?,
+            hops: 0,
         })
     }
 
