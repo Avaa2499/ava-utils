@@ -126,7 +126,7 @@ A crash, hang or bad input in one module never takes down another. A failed oper
 | Runaway memory | `MemoryMax=8G` in the template (a scan of ~280k entries peaks near 520 MiB). A module that needs more, e.g. a huge watcher journal, raises it with `systemctl --user edit ava-utils@<module>.service`; `au file-watcher journal` warns when its limit cannot fit |
 | Lost state | Anything needed to resume lives on disk, not only in memory |
 | Double-apply on retry | A retry that reuses its request id (`client::call_retrying`) gets the first reply replayed from a per-module cache (1024 replies, 10 minutes, memory only, successful replies only). After a crash the cache is empty, so operations must also be idempotent |
-| Missed events while down | Producer sends current state when the subscriber reconnects |
+| Missed events while down | Producer sends current state when the subscriber reconnects. For `files-changed` the state and every event also carry the watcher's `epoch` (new on every watcher start), a batch counter `seq`, `first_seq` (the oldest batch the journal still holds in full) and the watched `roots`. The indexer saves the position it reached. On connect it rescans the watched roots as a normal job if the epoch changed or the journal no longer reaches back to its position; it skips the rescan when the journal covers the gap. A skipped number in the live stream makes it reconnect. The saved position only moves forward once the rescan finishes |
 
 All directives verified present in systemd 259 on this machine.
 

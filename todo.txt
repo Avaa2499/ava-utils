@@ -26,11 +26,6 @@ https://openrouter.ai/models?variant=free
 nvidia api:
 (key is in /home/ava/NVIDIAAPI.txt, outside this repo; it expires 05/16/2027)
 
-1. [8] Indexer goes stale silently after missed changes
-   From the reviews. If the watcher or indexer is down while files change, nothing reconciles the index; the watcher journal only holds the last N changes.
-   Fix: the watcher topic state carries a generation number and an overflow/gap flag; the indexer detects a gap on (re)subscribe and rescans only the watched roots, as a normal job.
-   Done when: stop the indexer, change files under a watched root, start it, and the index is correct with no manual scan. Test covers journal overflow too.
-
 2. [6] Hung requests count as quarantine strikes, and refusals never expire
    From the reviews. A request that hangs and gets the module killed by the watchdog gets a strike; three hangs refuse a valid request forever.
    Fix: record that a restart was caused by the watchdog (not a crash in the request) and do not strike for it; add an expiry (e.g. 24h) to refusals, still clearable by hand.
@@ -72,12 +67,12 @@ nvidia api:
    From the reviews (copilot, random). The format is frozen, so this is only a measurement.
    Done when: the README records bytes and time per message for a 50,000-path batch.
 
-Reviews to delete once their items above are done: chatgptreview (1, 2), copilotreview (7, 11), geminireview (3, 5, 10), gemma-26ba4breview (8), qwen4maxreview (1, 2, 3, 5, 6, 8, 10), randomaireview (1).
+Reviews to delete once their items above are done: chatgptreview (2), copilotreview (7, 11), geminireview (3, 5, 10), gemma-26ba4breview (8), qwen4maxreview (2, 3, 5, 6, 8, 10).
 
 
 # Open questions
 
 Answer on the "> " line. Blank = not accepted. Answered ones move to README.md.
 
-Q1. Nothing starts at login, so after a fresh login the file-watcher is not watching and nothing is indexed until someone runs a command (from the reviews, qwen4max). Item 1 makes the indexer catch up when it starts, but changes stay unseen until then. Options: keep it as is, or enable only the listening sockets (watcher, indexer) at login.
+Q1. Nothing starts at login, so after a fresh login the file-watcher is not watching and nothing is indexed until someone runs a command (from the reviews, qwen4max). The indexer now catches up (rescans the watched folders) when it connects, but changes stay unseen until something starts the watcher. Options: keep it as is, or enable only the listening sockets (watcher, indexer) at login.
 > 
