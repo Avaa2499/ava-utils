@@ -164,6 +164,7 @@ fn put_and_start(
     units::ensure_templates(&layout.unit_dir)?;
     systemd::daemon_reload(sys)?;
     systemd::enable_now(sys, &src.module)?;
+    systemd::restart_service(sys, &src.module)?;
     crash_test(sys, probe, &src.module, others, layout.recovery_limit)
 }
 
@@ -322,6 +323,12 @@ mod tests {
             "{calls}"
         );
         assert!(calls.contains("kill -9 100"), "{calls}");
+        let restart = calls.find("restart ava-utils@file-indexer.service");
+        let kill = calls.find("kill -9 100");
+        assert!(
+            restart.is_some() && restart < kill,
+            "the new binary must be restarted in (resetting the crash counter) before the crash test: {calls}"
+        );
     }
 
     #[test]
