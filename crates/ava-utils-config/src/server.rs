@@ -147,18 +147,19 @@ fn quarantine_command(guard: &Guard, req: &Envelope) -> Option<Result<Envelope>>
     }
     let text = match args.get(1).map(String::as_str) {
         None | Some("list") => {
-            let all = guard.strikes();
+            let all = guard.status();
             if all.is_empty() {
                 "nothing is quarantined".to_string()
             } else {
                 all.iter()
-                    .map(|(label, n)| {
-                        let state = if *n >= crate::quarantine::MAX_STRIKES {
-                            "REFUSED"
-                        } else {
-                            "watching"
-                        };
-                        format!("{state}: {label} ({n} crashes)")
+                    .map(|e| match e.refused_for {
+                        Some(left) => format!(
+                            "REFUSED: {} ({} crashes, refused for another {})",
+                            e.label,
+                            e.strikes,
+                            crate::quarantine::human(left)
+                        ),
+                        None => format!("watching: {} ({} crashes)", e.label, e.strikes),
                     })
                     .collect::<Vec<_>>()
                     .join("\n")
