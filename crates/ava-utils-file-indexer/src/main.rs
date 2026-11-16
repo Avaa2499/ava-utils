@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -13,6 +13,7 @@ use ava_utils_config::messages::{
 use ava_utils_config::paths::Dirs;
 use ava_utils_config::server::{Handler, Outcome, serve_module};
 use ava_utils_config::topic::subscribe;
+use ava_utils_file_indexer::follow::{Next, Start, Tracker, catch_up};
 use ava_utils_file_indexer::service::Service;
 
 const MODULE: &str = "file-indexer";
@@ -49,6 +50,7 @@ impl Handler for Indexer {
 }
 
 fn follow_producer(service: Arc<Service>, dirs: Dirs) {
+    let tracker = Arc::new(Mutex::new(Tracker::new(service.index.clone())));
     let producer = Manifest::load(&dirs.manifests().join(format!("{MODULE}.toml")))
         .ok()
         .and_then(|m| m.listens.into_iter().find(|b| b.message == FILES_CHANGED))
@@ -81,14 +83,64 @@ fn follow_producer(service: Arc<Service>, dirs: Dirs) {
             thread::sleep,
         );
         let Ok(mut sub) = sub else { continue };
-        if let Ok(batch) = sub.state.body_as::<FilesChanged>() {
-            let _ = service.files_changed(&batch);
+        match sub.state.body_as::<FilesChanged>() {
+            Ok(state) => {
+                let (start, session) = {
+                    let mut t = tracker.lock().unwrap_or_else(|e| e.into_inner());
+                    (t.begin(&state), t.session())
+                };
+                if let Err(e) = service.files_changed(&state) {
+                    eprintln!("{MODULE}: could not apply the current state: {e}");
+                }
+                match start {
+                    Ok(Start::Covered) => {
+                        if let Err(e) = tracker
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .mark_applied()
+                        {
+                            eprintln!("{MODULE}: could not save the watcher position: {e}");
+                        }
+                    }
+                    Ok(Start::NeedsScan(roots)) => {
+                        eprintln!(
+                            "{MODULE}: changes may have been missed, rescanning {} watched folders",
+                            roots.len()
+                        );
+                        catch_up(service.clone(), tracker.clone(), session, roots);
+                    }
+                    Err(e) => eprintln!("{MODULE}: could not read the watcher position: {e}"),
+                }
+            }
+            Err(e) => eprintln!("{MODULE}: bad {FILES_CHANGED} state: {e}"),
         }
         while let Ok(ev) = sub.next_event(None) {
             match ev.body_as::<FilesChanged>() {
                 Ok(batch) => {
-                    if let Err(e) = service.files_changed(&batch) {
-                        eprintln!("{MODULE}: could not apply a change batch: {e}");
+                    let next = tracker
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .event(&batch);
+                    match next {
+                        Next::Skip => {}
+                        Next::Gap => {
+                            eprintln!(
+                                "{MODULE}: missed a {FILES_CHANGED} batch, reconnecting to catch up"
+                            );
+                            break;
+                        }
+                        Next::Apply => {
+                            if let Err(e) = service.files_changed(&batch) {
+                                eprintln!("{MODULE}: could not apply a change batch: {e}");
+                            }
+                            if let Err(e) = tracker
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .mark_applied()
+                            {
+                                eprintln!("{MODULE}: could not save the watcher position: {e}");
+                            }
+                        }
                     }
                 }
                 Err(e) => eprintln!("{MODULE}: bad {FILES_CHANGED} event: {e}"),

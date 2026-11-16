@@ -319,8 +319,11 @@ mod tests {
         assert_eq!(hub.held().0, 2);
     }
 
-    fn subscribe_to(hub: &Hub) -> (ava_utils_config::topic::Subscription, std::path::PathBuf) {
-        let d = dir("hub-sock");
+    fn subscribe_to(
+        hub: &Hub,
+        tag: &str,
+    ) -> (ava_utils_config::topic::Subscription, std::path::PathBuf) {
+        let d = dir(tag);
         let sock = d.join("w.sock");
         let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
         let publisher = hub.publisher.clone();
@@ -350,7 +353,7 @@ mod tests {
         hub.set_roots(&a(&["/r"])).unwrap();
         hub.emit(&one("/x")).unwrap();
         hub.emit(&one("/y")).unwrap();
-        let (mut sub, d) = subscribe_to(&hub);
+        let (mut sub, d) = subscribe_to(&hub, "hub-sock-a");
         let state: FilesChanged = sub.state.body_as().unwrap();
         assert_ne!(state.epoch, 0);
         assert_eq!((state.seq, state.first_seq), (2, 1));
@@ -371,8 +374,8 @@ mod tests {
         let (h1, h2) = (test_hub(), test_hub());
         h1.emit(&one("/x")).unwrap();
         h2.emit(&one("/x")).unwrap();
-        let (mut s1, d1) = subscribe_to(&h1);
-        let (mut s2, d2) = subscribe_to(&h2);
+        let (mut s1, d1) = subscribe_to(&h1, "hub-sock-b1");
+        let (mut s2, d2) = subscribe_to(&h2, "hub-sock-b2");
         let e1 = s1.state.body_as::<FilesChanged>().unwrap().epoch;
         let e2 = s2.state.body_as::<FilesChanged>().unwrap().epoch;
         assert_ne!(e1, e2);
@@ -389,7 +392,7 @@ mod tests {
         let hub = test_hub();
         hub.set_roots(&a(&["/one"])).unwrap();
         hub.set_roots(&a(&["/one", "/two"])).unwrap();
-        let (sub, d) = subscribe_to(&hub);
+        let (sub, d) = subscribe_to(&hub, "hub-sock-c");
         assert_eq!(
             sub.state.body_as::<FilesChanged>().unwrap().roots,
             ["/one", "/two"]
