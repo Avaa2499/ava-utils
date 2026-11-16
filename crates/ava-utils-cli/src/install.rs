@@ -11,7 +11,7 @@ use crate::loops;
 use crate::systemd::{self, Runner};
 use crate::units;
 
-pub const RESERVED: [&str; 4] = ["install", "remove", "check", "help"];
+pub const RESERVED: [&str; 5] = ["install", "remove", "check", "help", "completions"];
 
 pub const CRASH_RECOVERY_LIMIT: Duration = Duration::from_secs(15);
 

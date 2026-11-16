@@ -104,7 +104,7 @@ Frozen once three modules worked together. The exact wire bytes of every message
 
 ## The `au` CLI
 
-- Installed with `just install` (builds it and copies it to `~/.local/bin/au`; `au install` cannot install itself). Re-run after changing the CLI.
+- Installed with `just install` (builds it, copies it to `~/.local/bin/au` and writes the bash completion to `~/.local/share/bash-completion/completions/au`; `au install` cannot install itself). Re-run after changing the CLI.
 - One command for everything: install, remove, cycle check, and using modules as `au <module-suffix> <arguments>`.
 - It exits when done, so nothing depends on it running.
 - Reading command-line flags lives in `ava-utils-config`, not in a module.

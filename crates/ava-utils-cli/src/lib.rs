@@ -1,4 +1,5 @@
 pub mod app;
+pub mod complete;
 pub mod help;
 pub mod install;
 pub mod loops;

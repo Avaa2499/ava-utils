@@ -3,12 +3,13 @@ use std::path::Path;
 use ava_utils_config::error::{Error, Result};
 use ava_utils_config::manifest::load_all;
 
+use crate::complete::{candidates, script};
 use crate::help::help;
 use crate::install::{Layout, Probe, install, remove};
 use crate::loops;
 use crate::run::run_module;
 use crate::systemd::Runner;
-use crate::workspace::{build_and_test, find_root, source_for};
+use crate::workspace::{build_and_test, find_root, source_for, workspace_modules};
 
 fn module_arg(args: &[String], verb: &str) -> Result<String> {
     args.get(1)
@@ -44,6 +45,14 @@ pub fn dispatch(
             remove(layout, sys, &module)?;
             Ok(format!("removed {module}"))
         }
+        Some("__complete") => {
+            let manifests = load_all(&layout.dirs.manifests()).unwrap_or_default();
+            let workspace = find_root(cwd)
+                .map(|r| workspace_modules(&r))
+                .unwrap_or_default();
+            Ok(candidates(&args[1..], &manifests, &workspace).join("\n"))
+        }
+        Some("completions") => script(args.get(1).map(String::as_str).unwrap_or("bash")),
         Some("check") => {
             loops::check(&load_all(&layout.dirs.manifests())?)?;
             Ok("no loops".to_string())

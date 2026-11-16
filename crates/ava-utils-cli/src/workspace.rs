@@ -19,6 +19,23 @@ pub fn find_root(start: &Path) -> Result<PathBuf> {
     ))
 }
 
+pub fn workspace_modules(root: &Path) -> Vec<String> {
+    let mut found: Vec<String> = std::fs::read_dir(root.join("crates"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().join("manifest.toml").is_file())
+        .filter_map(|e| {
+            e.file_name()
+                .to_str()?
+                .strip_prefix("ava-utils-")
+                .map(str::to_string)
+        })
+        .collect();
+    found.sort();
+    found
+}
+
 pub fn source_for(root: &Path, module: &str) -> Source {
     let package = format!("ava-utils-{module}");
     Source {
