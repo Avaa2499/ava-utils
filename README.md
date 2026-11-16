@@ -13,7 +13,7 @@ A growing suite of small, independent Rust modules, optimised around the user's 
 - **Coupling:** no module depends on another module at compile time. At runtime a module reaches another by module name, but the name lives only in the manifest, never in code. Renaming or splitting a module means a find-and-replace across the manifests that name it. No module code changes and nothing is rebuilt.
 - **Communication:** topics (events) and calls (request/response), declared in each module's manifest.
 - **Data path:** peer to peer. Never a central broker.
-- **Cycles:** all loops banned (calls and events), checked at install time. Exception: a manifest can allow loops with specific named modules.
+- **Cycles:** loops made only of calls are banned (they can deadlock), checked at install time. Loops that include an event are allowed only if every module in the loop names the others in its manifest. See Cycles.
 - **Lifecycle:** systemd user units with socket activation.
 - **Isolation:** one OS process per module.
 - **Repo:** one Cargo workspace.
@@ -77,11 +77,12 @@ Frozen once three modules worked together. The exact wire bytes of every message
 
 ## Cycles
 
-- No loops of any kind or length (A → B → A, or A → B → C → A), calls and events alike. Checked at install time from the manifests; nothing stays running.
-- Exception: a module's manifest can name specific modules it's allowed to loop with. Loops are allowed with those named modules only. A module can have several loop partners.
-- Both modules must name each other in their manifests. If only one side does, install refuses it.
-- Only two-module loops (A ⇄ B) can be allowed. Longer loops (A → B → C → A) are always banned.
-- An allowed loop still has the 5s reply cutoff, so two modules waiting on each other get cut off instead of freezing forever.
+Two different dangers, two different rules. Checked at install time from the manifests; nothing stays running.
+
+- **Deadlock (loops made only of calls):** banned at any length (A → B → A, A → B → C → A). Only calls wait for an answer, so only a loop of calls can deadlock. The one exception is two modules that name each other in `loop_partners` (A ⇄ B). The 5s reply cutoff still applies to that pair.
+- **Loops that include an event:** events never wait (producers never block, queues are bounded), so these cannot deadlock. They are allowed only if **every module in the loop names every other module in it** in its `loop_partners`, whatever the loop's length. A loop nobody named is refused. Example: `gui` calls `file-watcher`, `file-watcher` sends events to `file-indexer`, `file-indexer` sends events to `gui`: all three name the other two.
+- Naming is always mutual. If only one side names the other, install refuses it.
+- **Event storms (A's event makes B send one that makes A send one...):** every event carries an optional `hops` box. A module that sends an event because of one it received must use `Publisher::publish_caused_by(&received, ...)`, which adds one hop. Past 16 hops the event is dropped, and subscribers also skip events that arrive past 16. A module that publishes through plain `publish` starts again at 0, so that is only for events with no cause. Bounded subscriber queues still disconnect an overloaded subscriber, so a storm slows the modules in the loop and nothing else.
 
 ## Launching
 

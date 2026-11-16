@@ -17,6 +17,10 @@ Scoring:
 
 ----
 
+USER ADDED, WANTS THESE DONE FIRST:
+review over everything in /reviews/ and add everything to this file if needed. delete each review when its been written here and action has been taken against it.
+set up nvidia and openrouter free ai models. some are incredibly good, and it allows for more ai models (subagents) to work at the same time.
+
 1. [8] Indexer goes stale silently after missed changes
    From the reviews. If the watcher or indexer is down while files change, nothing reconciles the index; the watcher journal only holds the last N changes.
    Fix: the watcher topic state carries a generation number and an overflow/gap flag; the indexer detects a gap on (re)subscribe and rescans only the watched roots, as a normal job.
@@ -41,5 +45,5 @@ Scoring:
 
 Answer on the "> " line. Blank = not accepted. Answered ones move to README.md.
 
-Q1. The cycle ban and the GUI. A GUI that sets watch roots (call to the watcher) and shows live index changes (event from the indexer) makes gui -> watcher -> indexer -> gui, a three-module loop, which is banned with no exception possible. Options: (A) GUI polls the indexer with calls and never subscribes, (C) ban only loops made entirely of calls, since only those can deadlock, and allow loops containing an event, (F) split the GUI into a view module and a control module. Decide before the GUI is built.
+(none open right now)
 > 
