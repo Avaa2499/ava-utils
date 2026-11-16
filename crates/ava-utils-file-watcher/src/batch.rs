@@ -4,6 +4,10 @@ use std::time::{Duration, Instant};
 
 use ava_utils_config::messages::FilesChanged;
 
+use crate::limit::Limit;
+
+pub const ENTRY_OVERHEAD: u64 = 64;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
     Changed(String),
@@ -71,28 +75,70 @@ pub fn pump(
 }
 
 pub struct Journal {
-    cap: usize,
+    limit: Limit,
+    bytes: u64,
     ops: VecDeque<(String, bool)>,
 }
 
 impl Journal {
-    pub fn new(cap: usize) -> Self {
+    pub fn new(limit: Limit) -> Self {
         Self {
-            cap,
+            limit,
+            bytes: 0,
             ops: VecDeque::new(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.ops.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ops.is_empty()
+    }
+
+    pub fn limit(&self) -> Limit {
+        self.limit
+    }
+
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    pub fn set_limit(&mut self, limit: Limit) {
+        self.limit = limit;
+        self.evict();
+    }
+
+    fn add(&mut self, path: &str, removed: bool) {
+        self.bytes += path.len() as u64 + ENTRY_OVERHEAD;
+        self.ops.push_back((path.to_string(), removed));
+    }
+
+    fn evict(&mut self) {
+        loop {
+            let over = match self.limit {
+                Limit::Count(n) => self.ops.len() > n,
+                Limit::Bytes(b) => self.bytes > b,
+            };
+            if !over {
+                return;
+            }
+            match self.ops.pop_front() {
+                Some((p, _)) => self.bytes -= p.len() as u64 + ENTRY_OVERHEAD,
+                None => return,
+            }
         }
     }
 
     pub fn record(&mut self, batch: &FilesChanged) {
         for p in &batch.removed {
-            self.ops.push_back((p.clone(), true));
+            self.add(p, true);
         }
         for p in &batch.changed {
-            self.ops.push_back((p.clone(), false));
+            self.add(p, false);
         }
-        while self.ops.len() > self.cap {
-            self.ops.pop_front();
-        }
+        self.evict();
     }
 
     pub fn state(&self) -> FilesChanged {
@@ -188,7 +234,7 @@ mod tests {
 
     #[test]
     fn the_journal_keeps_the_latest_state_and_drops_the_oldest() {
-        let mut j = Journal::new(3);
+        let mut j = Journal::new(Limit::Count(3));
         j.record(&FilesChanged {
             changed: vec!["/a".into(), "/b".into()],
             removed: vec![],
@@ -205,5 +251,24 @@ mod tests {
             removed: vec![],
         });
         assert_eq!(j.state().changed, ["/c", "/d"]);
+    }
+
+    #[test]
+    fn a_memory_limit_evicts_by_estimated_size_and_can_change_live() {
+        let one = 2 + ENTRY_OVERHEAD;
+        let mut j = Journal::new(Limit::Bytes(one * 3));
+        let batch = FilesChanged {
+            changed: (0..10).map(|i| format!("/{i}")).collect(),
+            removed: vec![],
+        };
+        j.record(&batch);
+        assert_eq!(j.len(), 3);
+        assert_eq!(j.bytes(), one * 3);
+        assert_eq!(j.state().changed, ["/7", "/8", "/9"]);
+        j.set_limit(Limit::Count(1));
+        assert_eq!((j.len(), j.bytes()), (1, one));
+        j.set_limit(Limit::Count(100));
+        j.record(&batch);
+        assert_eq!(j.len(), 11);
     }
 }

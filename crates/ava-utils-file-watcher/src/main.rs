@@ -10,6 +10,7 @@ use ava_utils_config::messages::{
 use ava_utils_config::paths::Dirs;
 use ava_utils_config::server::{Handler, Listener, Outcome, serve};
 use ava_utils_file_watcher::batch::pump;
+use ava_utils_file_watcher::limit;
 use ava_utils_file_watcher::service::{Hub, Service};
 
 const MODULE: &str = "file-watcher";
@@ -22,6 +23,9 @@ struct Watcher {
 impl Handler for Watcher {
     fn handle(&self, req: &Envelope) -> Outcome {
         if req.name == FILES_CHANGED {
+            if let Err(e) = self.hub.refresh() {
+                eprintln!("{MODULE}: could not refresh the subscriber state: {e}");
+            }
             return Outcome::Subscribe(self.hub.publisher.clone());
         }
         let reply = match req.name.as_str() {
@@ -51,9 +55,10 @@ fn main() {
     let dirs = Dirs::from_env().unwrap_or_else(|e| fail(&e));
     let state = dirs.state(MODULE).unwrap_or_else(|e| fail(&e));
     std::fs::create_dir_all(&state).unwrap_or_else(|e| fail(&e));
-    let hub = Arc::new(Hub::new(FILES_CHANGED).unwrap_or_else(|e| fail(&e)));
+    let journal_limit = limit::load(&state).unwrap_or_else(|e| fail(&e));
+    let hub = Arc::new(Hub::new(FILES_CHANGED, journal_limit).unwrap_or_else(|e| fail(&e)));
     let (tx, rx) = channel();
-    let (service, warnings) = Service::start(&state, tx).unwrap_or_else(|e| fail(&e));
+    let (service, warnings) = Service::start(&state, hub.clone(), tx).unwrap_or_else(|e| fail(&e));
     for w in warnings {
         eprintln!("{MODULE}: {w}");
     }

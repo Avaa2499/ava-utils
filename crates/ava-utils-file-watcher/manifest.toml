@@ -13,3 +13,7 @@ help = "Stop watching folders: remove <folder>..."
 [[commands]]
 name = "list"
 help = "List watched folders"
+
+[[commands]]
+name = "journal"
+help = "Show or set how much recent change history is kept: journal [200k|50mb|18gb]"
