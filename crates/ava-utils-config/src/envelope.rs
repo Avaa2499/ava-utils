@@ -52,6 +52,15 @@ impl Envelope {
         })
     }
 
+    pub fn call_with_id<T: Serialize>(id: &str, name: &str, body: &T) -> Result<Self> {
+        Ok(Self {
+            id: id.to_string(),
+            kind: Kind::Call,
+            name: name.to_string(),
+            body: to_body(body)?,
+        })
+    }
+
     pub fn event<T: Serialize>(name: &str, body: &T) -> Result<Self> {
         Ok(Self {
             id: new_request_id()?,

@@ -20,11 +20,14 @@ pub fn call_with_deadline<T: Serialize>(
     body: &T,
     deadline: Duration,
 ) -> Result<Envelope> {
+    send(socket, &Envelope::call(name, body)?, deadline)
+}
+
+pub fn send(socket: &Path, request: &Envelope, deadline: Duration) -> Result<Envelope> {
     let started = Instant::now();
-    let request = Envelope::call(name, body)?;
     let mut stream = UnixStream::connect(socket)?;
     stream.set_write_timeout(Some(deadline))?;
-    write_frame(&mut stream, &request)?;
+    write_frame(&mut stream, request)?;
     let left = deadline
         .checked_sub(started.elapsed())
         .filter(|d| !d.is_zero())
@@ -38,6 +41,17 @@ pub fn call_with_deadline<T: Serialize>(
         )));
     }
     reply.into_result()
+}
+
+pub fn call_retrying<T: Serialize>(
+    socket: &Path,
+    name: &str,
+    body: &T,
+    on_wait: impl FnMut(&Wait, &Error),
+    sleep: impl FnMut(Duration),
+) -> Result<Envelope> {
+    let request = Envelope::call(name, body)?;
+    retry(|| send(socket, &request, REPLY_DEADLINE), on_wait, sleep)
 }
 
 pub const HARD_ERROR_AFTER: Duration = Duration::from_secs(120);
@@ -129,6 +143,54 @@ mod tests {
             let req = read_frame(&mut s).unwrap();
             f(&mut s, req);
         })
+    }
+
+    #[test]
+    fn a_retried_call_keeps_the_same_request_id_so_the_server_can_recognise_it() {
+        let dir = TempDir::new();
+        let sock = dir.sock("retry");
+        let listener = UnixListener::bind(&sock).unwrap();
+        let ids = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = ids.clone();
+        let h = thread::spawn(move || {
+            for attempt in 0..3 {
+                let (mut s, _) = listener.accept().unwrap();
+                let req = read_frame(&mut s).unwrap();
+                seen.lock().unwrap().push(req.id.clone());
+                if attempt == 2 {
+                    write_frame(&mut s, &Envelope::reply(&req, &"done").unwrap()).unwrap();
+                }
+            }
+        });
+        let mut waits = 0;
+        let reply = call_retrying(&sock, "work", &"x", |_, _| waits += 1, |_| {}).unwrap();
+        h.join().unwrap();
+        assert_eq!(reply.body_as::<String>().unwrap(), "done");
+        assert_eq!(waits, 2);
+        let ids = ids.lock().unwrap();
+        assert_eq!(ids.len(), 3);
+        assert!(ids.iter().all(|i| i == &ids[0]), "{ids:?}");
+    }
+
+    #[test]
+    fn two_separate_calls_never_share_a_request_id() {
+        let dir = TempDir::new();
+        let sock = dir.sock("distinct");
+        let listener = UnixListener::bind(&sock).unwrap();
+        let h = thread::spawn(move || {
+            let mut ids = Vec::new();
+            for _ in 0..2 {
+                let (mut s, _) = listener.accept().unwrap();
+                let req = read_frame(&mut s).unwrap();
+                ids.push(req.id.clone());
+                write_frame(&mut s, &Envelope::reply(&req, &1u8).unwrap()).unwrap();
+            }
+            ids
+        });
+        call(&sock, "a", &()).unwrap();
+        call(&sock, "a", &()).unwrap();
+        let ids = h.join().unwrap();
+        assert_ne!(ids[0], ids[1]);
     }
 
     #[test]

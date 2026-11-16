@@ -1,4 +1,5 @@
 pub mod client;
+pub mod dedup;
 pub mod envelope;
 pub mod error;
 pub mod flags;
