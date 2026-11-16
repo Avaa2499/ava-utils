@@ -34,17 +34,9 @@ nvidia api:
    From the reviews (qwen4max). Absolute paths in debug info can make parallel worktrees miss the cache.
    Done when: a second worktree builds mostly from cache, or the build uses `--remap-path-prefix` / lower debuginfo so it does.
 
-7. [3] README: one owner per message
-   From the reviews (copilot). Write the rule that every message and topic is defined and owned by one module, so drift is visible.
-   Done when: the README states it and lists the current owner of each message.
-
 8. [2] `au status`
    From the reviews (qwen4max, gemma, others). Show which modules are running, their active jobs, subscriber counts and queue depths, without starting anything that is stopped.
    Done when: `au status` prints one line per installed module.
-
-9. [2] Retry jitter
-   From the reviews (chatgpt). Add a small random spread to reconnect retries so subscribers do not all reconnect at the same instant.
-   Done when: the retry delays vary within a bound and the 2s / 2min / 5min schedule still holds, with tests.
 
 10. [2] Pass file handles over sockets (SCM_RIGHTS)
    From the reviews (gemini, qwen4max). Stops a file being deleted or moved while another module reads it. The README defers this until a module first needs it; compression is the likely first.
