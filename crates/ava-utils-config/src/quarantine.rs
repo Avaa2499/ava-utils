@@ -511,4 +511,38 @@ mod tests {
         g.clear("all").unwrap();
         assert!(Guard::open(d.path()).unwrap().strikes().is_empty());
     }
+
+    #[test]
+    fn a_complete_looking_last_line_without_a_newline_was_half_written_and_is_dropped() {
+        for file in ["strikes.txt", "inflight.txt"] {
+            let d = TempDir::new();
+            std::fs::write(d.path().join(file), "good\t1\twork\nhalf\t2\tlabel").unwrap();
+            let g = Guard::open(d.path()).unwrap();
+            assert_eq!(g.strikes(), [("work".to_string(), 1)], "{file}");
+        }
+    }
+
+    #[test]
+    fn a_last_line_that_ends_with_a_newline_is_kept() {
+        let d = TempDir::new();
+        std::fs::write(
+            d.path().join("strikes.txt"),
+            "good\t1\twork\nfull\t2\tlabel\n",
+        )
+        .unwrap();
+        let g = Guard::open(d.path()).unwrap();
+        assert_eq!(g.strikes().len(), 2);
+    }
+
+    #[test]
+    fn a_single_line_without_a_newline_that_looks_complete_is_dropped() {
+        let d = TempDir::new();
+        std::fs::write(d.path().join("strikes.txt"), "only\t3\tlabel").unwrap();
+        let g = Guard::open(d.path()).unwrap();
+        assert!(g.strikes().is_empty());
+        assert!(
+            g.begin("only", "label").is_ok(),
+            "a half-written strike must not refuse anything"
+        );
+    }
 }
