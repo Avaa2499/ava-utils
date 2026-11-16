@@ -13,6 +13,20 @@ use crate::roots::Roots;
 use crate::watch::{SKIPPED_NON_UTF8, Watch, start};
 
 pub const EAGER_STATE_MAX: usize = 100_000;
+pub const UNIT_MEMORY_CAP: u64 = 8 << 30;
+pub const TYPICAL_PATH_BYTES: u64 = 100;
+
+pub fn memory_warning(limit: Limit) -> Option<String> {
+    let estimate = match limit {
+        Limit::Bytes(b) => b,
+        Limit::Count(n) => {
+            (n as u64).saturating_mul(TYPICAL_PATH_BYTES + crate::batch::ENTRY_OVERHEAD)
+        }
+    };
+    (estimate > UNIT_MEMORY_CAP / 4 * 3).then(|| {
+        "\nwarning: the service is capped at MemoryMax=8G, so this limit may get the watcher killed. Raise the cap with: systemctl --user edit ava-utils@file-watcher.service".to_string()
+    })
+}
 
 pub struct Hub {
     pub publisher: Arc<Publisher>,
@@ -170,8 +184,8 @@ impl Service {
                 }
                 let (n, bytes, current) = self.hub.held();
                 Ok(format!(
-                    "journal limit: {}. holding {n} changes (about {bytes} bytes)",
-                    current
+                    "journal limit: {current}. holding {n} changes (about {bytes} bytes){}",
+                    memory_warning(current).unwrap_or_default()
                 ))
             }
             Some(other) => Err(Error::Usage(format!("unknown command: {other}"))),
@@ -286,6 +300,21 @@ mod tests {
         hub.emit(&b).unwrap();
         assert_eq!(hub.publisher.subscribers(), 0);
         assert_eq!(hub.held().0, 2);
+    }
+
+    #[test]
+    fn limits_that_cannot_fit_under_the_memory_cap_get_a_warning() {
+        assert!(memory_warning(Limit::Count(50_000)).is_none());
+        assert!(memory_warning(Limit::Bytes(50 << 20)).is_none());
+        assert!(memory_warning(Limit::Bytes(6 << 30)).is_none());
+        assert!(
+            memory_warning(Limit::Bytes(7 << 30))
+                .unwrap()
+                .contains("MemoryMax=8G")
+        );
+        assert!(memory_warning(Limit::Bytes(18 << 30)).is_some());
+        assert!(memory_warning(Limit::Count(100_000_000)).is_some());
+        assert!(memory_warning(Limit::Count(u64::MAX as usize)).is_some());
     }
 
     #[test]
