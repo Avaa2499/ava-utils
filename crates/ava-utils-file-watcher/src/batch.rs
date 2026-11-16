@@ -7,6 +7,33 @@ use ava_utils_config::messages::FilesChanged;
 use crate::limit::Limit;
 
 pub const ENTRY_OVERHEAD: u64 = 64;
+pub const CHUNK_BYTES: usize = 8 * 1024 * 1024;
+const WIRE_OVERHEAD: usize = 8;
+
+pub fn split(batch: &FilesChanged, limit: usize) -> Vec<FilesChanged> {
+    let size = |p: &String| p.len() + WIRE_OVERHEAD;
+    let mut out = Vec::new();
+    let mut cur = FilesChanged::default();
+    let mut bytes = 0;
+    let removed = batch.removed.iter().map(|p| (p, true));
+    let changed = batch.changed.iter().map(|p| (p, false));
+    for (p, gone) in removed.chain(changed) {
+        if bytes > 0 && bytes + size(p) > limit {
+            out.push(std::mem::take(&mut cur));
+            bytes = 0;
+        }
+        bytes += size(p);
+        if gone {
+            cur.removed.push(p.clone());
+        } else {
+            cur.changed.push(p.clone());
+        }
+    }
+    if bytes > 0 || out.is_empty() {
+        out.push(cur);
+    }
+    out
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
@@ -83,6 +110,7 @@ pub struct Journal {
     seq: u64,
     evicted_through: u64,
     roots: Vec<String>,
+    chunk: usize,
 }
 
 impl Journal {
@@ -99,7 +127,13 @@ impl Journal {
             seq: 0,
             evicted_through: 0,
             roots: Vec::new(),
+            chunk: CHUNK_BYTES,
         }
+    }
+
+    pub fn with_chunk(mut self, chunk: usize) -> Self {
+        self.chunk = chunk;
+        self
     }
 
     pub fn epoch(&self) -> u64 {
@@ -188,7 +222,13 @@ impl Journal {
             roots: self.roots.clone(),
             ..Default::default()
         };
+        let mut bytes = 0;
         for (p, removed) in last {
+            bytes += p.len() + WIRE_OVERHEAD;
+            if bytes > self.chunk {
+                out.first_seq = self.seq + 1;
+                break;
+            }
             if removed {
                 out.removed.push(p.to_string());
             } else {
@@ -400,5 +440,104 @@ mod tests {
         let a = Journal::new(Limit::Count(1));
         let b = Journal::new(Limit::Count(1));
         assert!(a.epoch() != 0 && a.epoch() != b.epoch());
+    }
+
+    fn many(n: usize, len: usize) -> FilesChanged {
+        FilesChanged {
+            changed: (0..n).map(|i| format!("{i:0>len$}")).collect(),
+            removed: (0..n / 10).map(|i| format!("r{i:0>len$}")).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_small_batch_is_not_split() {
+        let b = many(10, 20);
+        assert_eq!(split(&b, CHUNK_BYTES), [b]);
+    }
+
+    #[test]
+    fn an_empty_batch_stays_one_empty_batch() {
+        assert_eq!(split(&FilesChanged::default(), 100).len(), 1);
+    }
+
+    #[test]
+    fn a_big_batch_splits_into_pieces_that_together_hold_every_path_once() {
+        let b = many(1000, 50);
+        let parts = split(&b, 4000);
+        assert!(parts.len() > 10);
+        let mut changed: Vec<String> = parts.iter().flat_map(|p| p.changed.clone()).collect();
+        let mut removed: Vec<String> = parts.iter().flat_map(|p| p.removed.clone()).collect();
+        changed.sort();
+        removed.sort();
+        let (mut ec, mut er) = (b.changed.clone(), b.removed.clone());
+        ec.sort();
+        er.sort();
+        assert_eq!((changed, removed), (ec, er));
+        for p in &parts {
+            let bytes: usize = p
+                .changed
+                .iter()
+                .chain(&p.removed)
+                .map(|x| x.len() + 8)
+                .sum();
+            assert!(bytes <= 4000, "{bytes}");
+        }
+    }
+
+    #[test]
+    fn a_batch_over_the_frame_limit_arrives_as_frames_that_each_fit() {
+        use ava_utils_config::envelope::Envelope;
+        use ava_utils_config::frame::MAX_FRAME_BYTES;
+        let b = many(200_000, 100);
+        let parts = split(&b, CHUNK_BYTES);
+        assert!(parts.len() >= 2);
+        for p in &parts {
+            let len = Envelope::event("files-changed", p)
+                .unwrap()
+                .encode()
+                .unwrap()
+                .len();
+            assert!(len < MAX_FRAME_BYTES as usize, "{len}");
+        }
+        let total: usize = parts
+            .iter()
+            .map(|p| p.changed.len() + p.removed.len())
+            .sum();
+        assert_eq!(total, 220_000);
+    }
+
+    #[test]
+    fn each_piece_gets_its_own_sequence_number() {
+        let mut j = Journal::with_epoch(Limit::Count(1_000_000), 5);
+        let seqs: Vec<u64> = split(&many(100, 50), 1000)
+            .iter()
+            .map(|p| j.record(p))
+            .collect();
+        assert_eq!(seqs, (1..=seqs.len() as u64).collect::<Vec<_>>());
+        assert!(seqs.len() > 3);
+    }
+
+    #[test]
+    fn a_state_too_big_for_one_frame_is_trimmed_and_tells_readers_to_rescan() {
+        let mut j = Journal::with_epoch(Limit::Count(1_000_000), 5).with_chunk(2000);
+        j.record(&many(500, 50));
+        let s = j.state();
+        assert!(s.changed.len() + s.removed.len() < 500);
+        assert_eq!(
+            s.first_seq,
+            s.seq + 1,
+            "the journal no longer covers a reader's gap"
+        );
+        assert_eq!(s.epoch, 5);
+    }
+
+    #[test]
+    fn a_state_that_fits_is_complete_and_keeps_its_real_first_seq() {
+        let mut j = Journal::with_epoch(Limit::Count(1_000_000), 5);
+        j.record(&many(100, 20));
+        let s = j.state();
+        assert_eq!(s.changed.len(), 100);
+        assert_eq!(s.first_seq, 1);
     }
 }

@@ -22,13 +22,10 @@ review over everything in /reviews/ and add everything to this file if needed. d
 set up nvidia and openrouter free ai models. some are incredibly good, and it allows for more ai models (subagents) to work at the same time, speeding up development.
 https://openrouter.ai/models?variant=free
 /home/ava/OPENROUTERAPI.txt
-
+add in the command au list, to list the status of all modules (installed, enabled/disabled)
+add in the command au disable/enable, to pause a module (user must re-enable with au enable)
 nvidia api:
 (key is in /home/ava/NVIDIAAPI.txt, outside this repo; it expires 05/16/2027)
-
-5. [6] Check a topic's state or a batch bigger than the 16 MiB frame limit is split, not dropped
-   From the reviews (gemini, qwen4max). Unverified: the watcher's state-on-subscribe with a very large journal (e.g. the 18gb setting), and any event batch over 16 MiB.
-   Done when: tests send a state and a batch over the limit and every entry still arrives, in several frames.
 
 6. [5] Check sccache hits across worktrees
    From the reviews (qwen4max). Absolute paths in debug info can make parallel worktrees miss the cache.
@@ -46,7 +43,7 @@ nvidia api:
    From the reviews (copilot, random). The format is frozen, so this is only a measurement.
    Done when: the README records bytes and time per message for a 50,000-path batch.
 
-Reviews to delete once their items above are done: copilotreview (7, 11), geminireview (5, 10), gemma-26ba4breview (8), qwen4maxreview (5, 6, 8, 10).
+Reviews to delete once their items above are done: copilotreview (7, 11), geminireview (10), gemma-26ba4breview (8), qwen4maxreview (6, 8, 10).
 
 
 # Open questions

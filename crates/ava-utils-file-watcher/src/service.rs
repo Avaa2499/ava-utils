@@ -7,7 +7,7 @@ use ava_utils_config::error::{Error, Result};
 use ava_utils_config::messages::FilesChanged;
 use ava_utils_config::topic::Publisher;
 
-use crate::batch::{Change, Journal};
+use crate::batch::{CHUNK_BYTES, Change, Journal, split};
 use crate::limit::{self, Limit};
 use crate::roots::Roots;
 use crate::watch::{SKIPPED_NON_UTF8, Watch, start};
@@ -46,6 +46,13 @@ impl Hub {
     }
 
     pub fn emit(&self, batch: &FilesChanged) -> Result<()> {
+        for part in split(batch, CHUNK_BYTES) {
+            self.emit_part(&part)?;
+        }
+        Ok(())
+    }
+
+    fn emit_part(&self, batch: &FilesChanged) -> Result<()> {
         let event = {
             let mut j = self.journal();
             let seq = j.record(batch);
