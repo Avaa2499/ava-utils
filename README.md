@@ -2,7 +2,7 @@
 
 A growing suite of small, independent Rust modules, optimised around the user's Linux machine. Each module does one bounded job and publishes its own inputs and outputs. Modules work together through shared topics and calls, never through direct dependencies. New things get their own module, never tacked onto an existing one. The suite is designed to grow indefinitely.
 
-**Status:** building. `ava-utils-config`, the `au` CLI, `ava-utils-file-indexer`, `ava-utils-file-searcher` and `ava-utils-file-watcher` are done. Next: freeze the message format.
+**Status:** building. `ava-utils-config`, the `au` CLI, `ava-utils-file-indexer`, `ava-utils-file-searcher` and `ava-utils-file-watcher` are done. The message format is frozen. Next: install `au` onto PATH.
 
 ## Locked decisions
 
@@ -48,6 +48,16 @@ Every module follows these. No exceptions, ever.
 - Messages are binary, encoded with MessagePack. It's hidden inside `ava-utils-config`, so it can be swapped for our own format later without touching any module. Each message carries its box names, not just the values, so updating one module never breaks the others. The `au` CLI is the parser: it shows messages as readable text, with a flag to show the raw binary instead.
 - Codecs: `ava-utils-codecs` is a shared crate, not a module. It uses the codec libraries already installed on the system (libavcodec, libdav1d, libvpx, libopus), so the heavy code exists once. Video playback, audio playback and convert-file (e.g. .mkv → .mp4) build it in.
 - Never two modules doing the same thing. This is a design rule, not an install check. Install only checks loops, manifests and tests.
+
+## Message format (frozen)
+
+Frozen once three modules worked together. The exact wire bytes of every message and the envelope are saved in `crates/ava-utils-config/tests/golden/`, and a test fails if they change.
+
+- **Free, no ceremony:** add an optional box (`#[serde(default)]`), add a message or topic, add an enum variant. Old modules ignore unknown boxes and decode unknown enum variants as `Unknown`.
+- **A deliberate format change:** rename or remove a box, change a box's type, make an optional box required, change what a box means. The golden test fails; review the diff, then run `AU_BLESS=1 cargo test -p ava-utils-config --test golden` to accept it, fix every module the compiler points at, and reinstall them together.
+- **Enums on the wire** must have a `#[serde(other)] Unknown` variant, and callers must handle it (refuse, or treat as unsupported).
+- **Errors** use the standard codes in `ava-utils-config` (`error::codes`): `unavailable`, `unknown-call`, `bad-request`, `not-a-call`, `failed`. Modules map their errors with `Envelope::from_error`.
+- **Paths are UTF-8 strings.** A name that is not valid UTF-8 is skipped and counted, never silently lost: `au file-indexer status` and `au file-watcher` show the count.
 
 ## Long jobs
 

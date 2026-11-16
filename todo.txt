@@ -17,10 +17,7 @@ Scoring:
 
 ----
 
-1. [2] Freeze the message format.
-   Done when: three modules work together.
-
-2. [2] Install `au` itself into `~/.local/bin` (it is on PATH already; today `au` only runs from `target/release/au`). Likely a `just install` recipe or a bootstrap command, since `au install` can't install itself before it exists.
+1. [2] Install `au` itself into `~/.local/bin` (it is on PATH already; today `au` only runs from `target/release/au`). Likely a `just install` recipe or a bootstrap command, since `au install` can't install itself before it exists.
    Done when: typing `au` in a fresh shell works.
 
 
