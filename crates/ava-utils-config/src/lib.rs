@@ -13,3 +13,4 @@ pub mod server;
 #[cfg(test)]
 mod testutil;
 pub mod topic;
+pub mod watchdog;
