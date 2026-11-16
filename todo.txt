@@ -20,7 +20,7 @@ Scoring:
 USER IDEAS: none open.
 
 12. [2] Module: gui (status bar and live updates)
-   Needs an `index-changed` topic from the indexer, and `loop_partners` naming in the gui, file-watcher and file-indexer manifests (see Cycles in the README). Done when: a window shows live indexer state with no polling.
+   Waits until the user is at the machine to judge it. Needs an `index-changed` topic from the indexer, and `loop_partners` naming in the gui, file-watcher and file-indexer manifests (see Cycles in the README). Done when: a window shows live indexer state with no polling.
 
 13. [2] Shared crate: ava-utils-codecs
    Uses the system libavcodec, libdav1d, libvpx and libopus. Needed before the three media modules below. Done when: a test decodes one audio and one video sample.

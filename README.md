@@ -2,7 +2,7 @@
 
 A growing suite of small, independent Rust modules, optimised around the user's Linux machine. Each module does one bounded job and publishes its own inputs and outputs. Modules work together through shared topics and calls, never through direct dependencies. New things get their own module, never tacked onto an existing one. The suite is designed to grow indefinitely.
 
-**Status:** building. `ava-utils-config`, the `au` CLI, `ava-utils-file-indexer`, `ava-utils-file-searcher` and `ava-utils-file-watcher` are done. The message format is frozen, the hardening items are built, and `au` is on PATH. Open work, including the review follow-ups and the free-model subagent setup, is in `todo.txt`.
+**Status:** building. Done: `ava-utils-config`, the `au` CLI (install, remove, list, enable, disable, status, check, completions), and the three file modules (`file-watcher`, `file-indexer`, `file-searcher`). The message format is frozen, every item in the fault-containment table is built and tested, and `au` is on PATH. Open work is only new modules and the shared codecs crate, in `todo.txt`; the GUI waits until the user is at the machine to judge it.
 
 ## Locked decisions
 
@@ -111,7 +111,7 @@ Two different dangers, two different rules. Checked at install time from the man
 - **Deadlock (loops made only of calls):** banned at any length (A → B → A, A → B → C → A). Only calls wait for an answer, so only a loop of calls can deadlock. The one exception is two modules that name each other in `loop_partners` (A ⇄ B). The 5s reply cutoff still applies to that pair.
 - **Loops that include an event:** events never wait (producers never block, queues are bounded), so these cannot deadlock. They are allowed only if **every module in the loop names every other module in it** in its `loop_partners`, whatever the loop's length. A loop nobody named is refused. Example: `gui` calls `file-watcher`, `file-watcher` sends events to `file-indexer`, `file-indexer` sends events to `gui`: all three name the other two.
 - Naming is always mutual. If only one side names the other, install refuses it.
-- **Event storms (A's event makes B send one that makes A send one...):** every event carries an optional `hops` box. A module that sends an event because of one it received must use `Publisher::publish_caused_by(&received, ...)`, which adds one hop. Past 16 hops the event is dropped, and subscribers also skip events that arrive past 16. A module that publishes through plain `publish` starts again at 0, so that is only for events with no cause. Bounded subscriber queues still disconnect an overloaded subscriber, so a storm slows the modules in the loop and nothing else.
+- **Event storms (A's event makes B send one that makes A send one...):** every event carries an optional `hops` box. `Publisher::publish(cause, event)` has no default: the caller must pass `Some(&received)` when the event is sent because of one it received, which adds one hop, or `None` when nothing caused it, which starts at 0. The compiler refuses a publish that does not say. Past 16 hops the event is dropped (`publish` returns `false`), and subscribers also skip events that arrive past 16. Bounded subscriber queues still disconnect an overloaded subscriber, so a storm slows the modules in the loop and nothing else.
 
 ## Launching
 

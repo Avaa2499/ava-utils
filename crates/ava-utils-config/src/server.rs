@@ -577,7 +577,7 @@ mod tests {
         while topic.subscribers() == 0 {
             thread::sleep(Duration::from_millis(5));
         }
-        topic.publish(&5u32).unwrap();
+        topic.publish(None, &5u32).unwrap();
         let e = sub.next_event(Some(Duration::from_secs(2))).unwrap();
         assert_eq!(e.body_as::<u32>().unwrap(), 5);
     }

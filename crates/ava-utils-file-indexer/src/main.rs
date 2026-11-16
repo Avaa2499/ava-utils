@@ -133,12 +133,25 @@ fn follow_producer(service: Arc<Service>, dirs: Dirs) {
                             if let Err(e) = service.files_changed(&batch) {
                                 eprintln!("{MODULE}: could not apply a change batch: {e}");
                             }
-                            if let Err(e) = tracker
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .mark_applied()
-                            {
+                            let (saved, fresh, session) = {
+                                let mut t = tracker.lock().unwrap_or_else(|e| e.into_inner());
+                                (t.mark_applied(), t.new_roots(&batch.roots), t.session())
+                            };
+                            if let Err(e) = saved {
                                 eprintln!("{MODULE}: could not save the watcher position: {e}");
+                            }
+                            match fresh {
+                                Ok(roots) if !roots.is_empty() => {
+                                    eprintln!(
+                                        "{MODULE}: {} new watched folders, scanning what is already in them",
+                                        roots.len()
+                                    );
+                                    catch_up(service.clone(), tracker.clone(), session, roots);
+                                }
+                                Ok(_) => {}
+                                Err(e) => {
+                                    eprintln!("{MODULE}: could not check the watched folders: {e}")
+                                }
                             }
                         }
                     }

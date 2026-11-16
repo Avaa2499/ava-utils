@@ -62,10 +62,11 @@ impl Hub {
             FilesChanged {
                 epoch: j.epoch(),
                 seq,
+                roots: j.roots().to_vec(),
                 ..batch.clone()
             }
         };
-        self.publisher.publish(&event)
+        self.publisher.publish(None, &event).map(|_| ())
     }
 
     pub fn set_roots(&self, roots: &[String]) -> Result<()> {
@@ -142,6 +143,7 @@ impl Service {
         let (new, warnings) = start(&roots, self.tx.clone())?;
         *watch = Some(new);
         self.hub.set_roots(&roots)?;
+        self.hub.emit(&FilesChanged::default())?;
         *lock(&self.current) = roots;
         Ok(warnings)
     }
@@ -455,5 +457,103 @@ mod tests {
         ));
         assert_eq!(limit::load(&state).unwrap(), Limit::Bytes(50 << 20));
         let _ = std::fs::remove_dir_all(state);
+    }
+
+    #[test]
+    fn adding_a_folder_tells_subscribers_with_an_event_that_lists_the_new_roots() {
+        let state = dir("svc-announce-state");
+        let w = dir("svc-announce");
+        let (tx, _rx) = channel();
+        let hub = test_hub();
+        let (s, _) = Service::start(&state, hub.clone(), tx).unwrap();
+        let (mut sub, d) = subscribe_to(&hub, "svc-announce-sub");
+        let first = sub.state.body_as::<FilesChanged>().unwrap();
+        assert!(first.roots.is_empty());
+        s.run_command(&a(&["add", &w.to_string_lossy()])).unwrap();
+        let ev: FilesChanged = sub
+            .next_event(Some(Duration::from_secs(2)))
+            .unwrap()
+            .body_as()
+            .unwrap();
+        let root = std::fs::canonicalize(&w)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(ev.roots, [root]);
+        assert!(ev.changed.is_empty() && ev.removed.is_empty());
+        assert_eq!(ev.seq, first.seq + 1);
+        for p in [state, w, d] {
+            let _ = std::fs::remove_dir_all(p);
+        }
+    }
+
+    #[test]
+    fn every_event_carries_the_current_roots() {
+        let hub = test_hub();
+        hub.set_roots(&a(&["/r1", "/r2"])).unwrap();
+        let (mut sub, d) = subscribe_to(&hub, "svc-evroots");
+        hub.emit(&one("/x")).unwrap();
+        let ev: FilesChanged = sub
+            .next_event(Some(Duration::from_secs(2)))
+            .unwrap()
+            .body_as()
+            .unwrap();
+        assert_eq!(ev.roots, ["/r1", "/r2"]);
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn a_batch_over_the_frame_limit_reaches_a_live_subscriber_in_several_events_with_every_path() {
+        let hub = Arc::new(Hub::new("files-changed", Limit::Count(1_000_000)).unwrap());
+        let (mut sub, d) = subscribe_to(&hub, "svc-bigbatch");
+        let pad = "p".repeat(90);
+        let big = FilesChanged {
+            changed: (0..250_000).map(|i| format!("/{pad}/{i:08}")).collect(),
+            removed: (0..1_000).map(|i| format!("/{pad}/gone{i}")).collect(),
+            ..Default::default()
+        };
+        let sender = {
+            let hub = hub.clone();
+            std::thread::spawn(move || hub.emit(&big).unwrap())
+        };
+        let (mut changed, mut removed, mut events, mut last_seq) = (0, 0, 0, 0);
+        while changed < 250_000 || removed < 1_000 {
+            let ev: FilesChanged = sub
+                .next_event(Some(Duration::from_secs(60)))
+                .expect("a piece went missing")
+                .body_as()
+                .unwrap();
+            assert_eq!(
+                ev.seq,
+                last_seq + 1,
+                "every piece has the next sequence number"
+            );
+            last_seq = ev.seq;
+            changed += ev.changed.len();
+            removed += ev.removed.len();
+            events += 1;
+        }
+        sender.join().unwrap();
+        assert!(events >= 2, "it must have been split, got {events} event");
+        assert_eq!((changed, removed), (250_000, 1_000));
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn a_state_too_big_for_one_frame_still_reaches_a_new_subscriber_and_tells_it_to_rescan() {
+        let hub = Arc::new(Hub::new("files-changed", Limit::Count(1_000_000)).unwrap());
+        let pad = "p".repeat(90);
+        hub.emit(&FilesChanged {
+            changed: (0..250_000).map(|i| format!("/{pad}/{i:08}")).collect(),
+            ..Default::default()
+        })
+        .unwrap();
+        hub.refresh().unwrap();
+        let (sub, d) = subscribe_to(&hub, "svc-bigstate");
+        let state = sub.state.body_as::<FilesChanged>().unwrap();
+        assert_eq!(state.first_seq, state.seq + 1);
+        assert!(state.changed.len() < 250_000);
+        assert_ne!(state.epoch, 0);
+        let _ = std::fs::remove_dir_all(d);
     }
 }

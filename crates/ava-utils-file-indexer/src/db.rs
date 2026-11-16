@@ -395,6 +395,15 @@ impl Index {
             .map_err(db_err)?;
         w.commit().map_err(db_err)
     }
+
+    pub fn remove_meta(&self, key: &str) -> Result<()> {
+        let w = self.db.begin_write().map_err(db_err)?;
+        w.open_table(META)
+            .map_err(db_err)?
+            .remove(key)
+            .map_err(db_err)?;
+        w.commit().map_err(db_err)
+    }
 }
 
 #[cfg(test)]

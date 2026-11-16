@@ -148,6 +148,10 @@ impl Journal {
         self.evicted_through + 1
     }
 
+    pub fn roots(&self) -> &[String] {
+        &self.roots
+    }
+
     pub fn set_roots(&mut self, roots: Vec<String>) {
         self.roots = roots;
     }

@@ -77,15 +77,17 @@ impl Publisher {
         Ok(())
     }
 
-    pub fn publish<T: Serialize>(&self, event: &T) -> Result<()> {
-        self.send(event, 0).map(|_| ())
-    }
-
-    pub fn publish_caused_by<T: Serialize>(&self, cause: &Envelope, event: &T) -> Result<bool> {
-        let hops = cause.hops.saturating_add(1);
-        if hops > MAX_HOPS {
-            return Ok(false);
-        }
+    pub fn publish<T: Serialize>(&self, cause: Option<&Envelope>, event: &T) -> Result<bool> {
+        let hops = match cause {
+            None => 0,
+            Some(c) => {
+                let hops = c.hops.saturating_add(1);
+                if hops > MAX_HOPS {
+                    return Ok(false);
+                }
+                hops
+            }
+        };
         self.send(event, hops)?;
         Ok(true)
     }
@@ -227,12 +229,12 @@ mod tests {
         let (_d, sock, p) = setup(8, Duration::from_secs(1));
         let mut sub = subscribe(&sock, "files-changed").unwrap();
         wait_for(|| p.subscribers() == 1);
-        p.publish(&1u32).unwrap();
+        p.publish(None, &1u32).unwrap();
         assert_eq!(
             sub.next_event(Some(Duration::from_secs(2))).unwrap().hops,
             0
         );
-        assert!(p.publish_caused_by(&event_at(4), &2u32).unwrap());
+        assert!(p.publish(Some(&event_at(4)), &2u32).unwrap());
         assert_eq!(
             sub.next_event(Some(Duration::from_secs(2))).unwrap().hops,
             5
@@ -244,9 +246,9 @@ mod tests {
         let (_d, sock, p) = setup(8, Duration::from_secs(1));
         let mut sub = subscribe(&sock, "files-changed").unwrap();
         wait_for(|| p.subscribers() == 1);
-        assert!(p.publish_caused_by(&event_at(MAX_HOPS - 1), &1u32).unwrap());
-        assert!(!p.publish_caused_by(&event_at(MAX_HOPS), &2u32).unwrap());
-        assert!(!p.publish_caused_by(&event_at(u8::MAX), &3u32).unwrap());
+        assert!(p.publish(Some(&event_at(MAX_HOPS - 1)), &1u32).unwrap());
+        assert!(!p.publish(Some(&event_at(MAX_HOPS)), &2u32).unwrap());
+        assert!(!p.publish(Some(&event_at(u8::MAX)), &3u32).unwrap());
         assert_eq!(
             sub.next_event(Some(Duration::from_secs(2))).unwrap().hops,
             MAX_HOPS
@@ -288,8 +290,8 @@ mod tests {
         let mut sub = subscribe(&sock, "files-changed").unwrap();
         assert_eq!(sub.state.body_as::<u32>().unwrap(), 7);
         wait_for(|| p.subscribers() == 1);
-        p.publish(&1u32).unwrap();
-        p.publish(&2u32).unwrap();
+        p.publish(None, &1u32).unwrap();
+        p.publish(None, &2u32).unwrap();
         let t = Some(Duration::from_secs(2));
         assert_eq!(sub.next_event(t).unwrap().body_as::<u32>().unwrap(), 1);
         assert_eq!(sub.next_event(t).unwrap().body_as::<u32>().unwrap(), 2);
@@ -304,7 +306,7 @@ mod tests {
         let big = vec![0u8; 256 * 1024];
         let t = Instant::now();
         for _ in 0..20 {
-            p.publish(&big).unwrap();
+            p.publish(None, &big).unwrap();
             let _ = healthy.next_event(Some(Duration::from_millis(50)));
         }
         assert!(t.elapsed() < Duration::from_secs(5));
@@ -327,7 +329,7 @@ mod tests {
         wait_for(|| p.subscribers() == 1);
         drop(sub);
         wait_for(|| {
-            let _ = p.publish(&0u32);
+            let _ = p.publish(None, &0u32);
             p.subscribers() == 0
         });
     }

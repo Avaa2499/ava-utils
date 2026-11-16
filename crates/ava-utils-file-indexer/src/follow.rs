@@ -30,6 +30,17 @@ pub struct Tracker {
     last_seq: u64,
     clean: bool,
     session: u64,
+    pending: Vec<String>,
+    known: Vec<String>,
+}
+
+fn root_key(root: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in root.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("root-scanned-{h:016x}")
 }
 
 impl Tracker {
@@ -40,7 +51,23 @@ impl Tracker {
             last_seq: 0,
             clean: false,
             session: 0,
+            pending: Vec::new(),
+            known: Vec::new(),
         }
+    }
+
+    fn is_scanned(&self, root: &str) -> Result<bool> {
+        Ok(self.index.meta(&root_key(root))?.is_some())
+    }
+
+    fn unscanned(&self, roots: &[String]) -> Result<Vec<String>> {
+        let mut out = Vec::new();
+        for r in roots {
+            if !self.is_scanned(r)? {
+                out.push(r.clone());
+            }
+        }
+        Ok(out)
     }
 
     pub fn session(&self) -> u64 {
@@ -53,19 +80,23 @@ impl Tracker {
         let cursor_seq = self.index.meta(SEQ_KEY)?.unwrap_or(0);
         self.epoch = state.epoch;
         self.last_seq = state.seq;
+        self.known = state.roots.clone();
+        self.pending.clear();
         let covered = state.epoch != 0
             && cursor_epoch == state.epoch
             && cursor_seq <= state.seq
             && state.first_seq <= cursor_seq + 1;
-        if covered {
+        if covered || state.roots.is_empty() {
             self.clean = true;
-            return Ok(Start::Covered);
-        }
-        if state.roots.is_empty() {
-            self.clean = true;
-            return Ok(Start::Covered);
+            let missing = self.unscanned(&state.roots)?;
+            if missing.is_empty() {
+                return Ok(Start::Covered);
+            }
+            self.pending = missing.clone();
+            return Ok(Start::NeedsScan(missing));
         }
         self.clean = false;
+        self.pending = state.roots.clone();
         Ok(Start::NeedsScan(state.roots.clone()))
     }
 
@@ -83,6 +114,24 @@ impl Tracker {
         Next::Gap
     }
 
+    pub fn new_roots(&mut self, roots: &[String]) -> Result<Vec<String>> {
+        if roots.is_empty() && self.known.is_empty() {
+            return Ok(Vec::new());
+        }
+        for gone in self.known.iter().filter(|k| !roots.contains(k)) {
+            self.index.remove_meta(&root_key(gone))?;
+        }
+        self.known = roots.to_vec();
+        let mut fresh = Vec::new();
+        for r in self.unscanned(roots)? {
+            if !self.pending.contains(&r) {
+                self.pending.push(r.clone());
+                fresh.push(r);
+            }
+        }
+        Ok(fresh)
+    }
+
     pub fn mark_applied(&self) -> Result<()> {
         if self.clean && self.epoch != 0 {
             self.index.set_meta(EPOCH_KEY, self.epoch)?;
@@ -92,12 +141,29 @@ impl Tracker {
     }
 
     pub fn caught_up(&mut self, session: u64) -> Result<bool> {
+        let all = self.pending.clone();
+        self.scanned(session, &all)
+    }
+
+    pub fn scanned(&mut self, session: u64, roots: &[String]) -> Result<bool> {
         if session != self.session {
             return Ok(false);
         }
-        self.clean = true;
-        self.mark_applied()?;
+        for r in roots {
+            self.index.set_meta(&root_key(r), 1)?;
+        }
+        self.pending.retain(|p| !roots.contains(p));
+        if self.pending.is_empty() {
+            self.clean = true;
+            self.mark_applied()?;
+        }
         Ok(true)
+    }
+
+    pub fn drop_pending(&mut self, session: u64, roots: &[String]) {
+        if session == self.session {
+            self.pending.retain(|p| !roots.contains(p));
+        }
     }
 }
 
@@ -114,12 +180,12 @@ pub fn catch_up(
     roots: Vec<String>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let roots: Vec<String> = roots
+        let (roots, missing): (Vec<String>, Vec<String>) = roots
             .into_iter()
-            .filter(|r| std::path::Path::new(r).exists())
-            .collect();
+            .partition(|r| std::path::Path::new(r).exists());
+        lock(&tracker).drop_pending(session, &missing);
         if roots.is_empty() {
-            let _ = lock(&tracker).caught_up(session);
+            let _ = lock(&tracker).scanned(session, &[]);
             return;
         }
         let id = loop {
@@ -139,7 +205,7 @@ pub fn catch_up(
             match service.jobs.status(&id) {
                 Ok(s) if s.state == JobState::Running => thread::sleep(POLL),
                 Ok(s) if s.state == JobState::Done => {
-                    if let Err(e) = lock(&tracker).caught_up(session) {
+                    if let Err(e) = lock(&tracker).scanned(session, &roots) {
                         eprintln!("file-indexer: could not save the watcher position: {e}");
                     }
                     return;
@@ -447,5 +513,111 @@ mod tests {
             .unwrap();
         assert_eq!(cursor(&s.index).0, 0);
         let _ = (std::fs::remove_dir_all(d), std::fs::remove_dir_all(root));
+    }
+
+    fn r(s: &[&str]) -> Vec<String> {
+        s.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn a_covered_connection_still_scans_a_root_that_was_never_scanned() {
+        let (d, _ix, mut t) = tracker("fo-unscanned");
+        t.begin(&state(5, 3, 1, &["/old"])).unwrap();
+        t.caught_up(t.session()).unwrap();
+        assert_eq!(t.begin(&state(5, 3, 1, &["/old"])).unwrap(), Start::Covered);
+        assert_eq!(
+            t.begin(&state(5, 3, 1, &["/old", "/new"])).unwrap(),
+            scan_of(&["/new"]),
+            "only the new folder is scanned"
+        );
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn a_root_added_while_connected_is_reported_once_until_it_is_scanned() {
+        let (d, _ix, mut t) = tracker("fo-live-root");
+        t.begin(&state(5, 3, 1, &["/old"])).unwrap();
+        t.caught_up(t.session()).unwrap();
+        assert!(t.new_roots(&r(&["/old"])).unwrap().is_empty());
+        assert_eq!(t.new_roots(&r(&["/old", "/new"])).unwrap(), r(&["/new"]));
+        assert!(
+            t.new_roots(&r(&["/old", "/new"])).unwrap().is_empty(),
+            "already being scanned"
+        );
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn a_crash_before_the_new_root_scan_finishes_means_it_is_scanned_after_the_restart() {
+        let (d, ix, mut t) = tracker("fo-crash-root");
+        t.begin(&state(5, 3, 1, &["/old"])).unwrap();
+        t.caught_up(t.session()).unwrap();
+        assert_eq!(t.new_roots(&r(&["/old", "/new"])).unwrap(), r(&["/new"]));
+        assert_eq!(t.event(&event(5, 4)), Next::Apply);
+        t.mark_applied().unwrap();
+        drop(t);
+        let mut t2 = Tracker::new(ix);
+        assert_eq!(
+            t2.begin(&state(5, 4, 1, &["/old", "/new"])).unwrap(),
+            scan_of(&["/new"])
+        );
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn a_finished_scan_marks_only_the_roots_it_scanned() {
+        let (d, _ix, mut t) = tracker("fo-partial");
+        t.begin(&state(5, 3, 1, &["/a", "/b"])).unwrap();
+        let s = t.session();
+        assert!(t.scanned(s, &r(&["/a"])).unwrap());
+        assert_eq!(
+            cursor(&_ix),
+            (0, 0),
+            "/b is still pending, so nothing is saved"
+        );
+        assert!(t.scanned(s, &r(&["/b"])).unwrap());
+        assert_eq!(cursor(&_ix), (5, 3));
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn a_stale_session_cannot_mark_a_root_scanned() {
+        let (d, ix, mut t) = tracker("fo-stale-root");
+        t.begin(&state(5, 3, 1, &["/a"])).unwrap();
+        let old = t.session();
+        t.begin(&state(5, 3, 1, &["/a"])).unwrap();
+        assert!(!t.scanned(old, &r(&["/a"])).unwrap());
+        assert_eq!(
+            Tracker::new(ix).begin(&state(5, 3, 1, &["/a"])).unwrap(),
+            scan_of(&["/a"])
+        );
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn removing_a_root_forgets_that_it_was_scanned_so_adding_it_back_scans_it_again() {
+        let (d, _ix, mut t) = tracker("fo-readd");
+        t.begin(&state(5, 3, 1, &["/a", "/b"])).unwrap();
+        t.caught_up(t.session()).unwrap();
+        assert!(t.new_roots(&r(&["/a"])).unwrap().is_empty());
+        assert_eq!(t.new_roots(&r(&["/a", "/b"])).unwrap(), r(&["/b"]));
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn a_root_that_does_not_exist_is_not_marked_scanned() {
+        let (d, ix, mut t) = tracker("fo-missing");
+        let session = t.session() + 1;
+        t.begin(&state(5, 3, 1, &["/definitely/not/here"])).unwrap();
+        t.drop_pending(session, &r(&["/definitely/not/here"]));
+        assert!(t.scanned(session, &[]).unwrap());
+        assert_eq!(
+            Tracker::new(ix)
+                .begin(&state(5, 3, 1, &["/definitely/not/here"]))
+                .unwrap(),
+            scan_of(&["/definitely/not/here"]),
+            "it is tried again on the next connect"
+        );
+        let _ = std::fs::remove_dir_all(d);
     }
 }
