@@ -1,4 +1,4 @@
-use std::os::fd::FromRawFd;
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use crate::client::REPLY_DEADLINE;
 use crate::dedup::ReplyCache;
 use crate::envelope::{Envelope, Kind};
 use crate::error::{Error, Result};
-use crate::frame::{read_frame, write_frame};
+use crate::frame::{read_frame_with_files, write_frame};
 use crate::messages::{CommandOutput, JOB_CANCEL, JOB_PROGRESS, RUN_COMMAND, RunCommand};
 use crate::quarantine::Guard;
 use crate::topic::Publisher;
@@ -57,6 +57,11 @@ pub enum Outcome {
 
 pub trait Handler: Send + Sync + 'static {
     fn handle(&self, request: &Envelope) -> Outcome;
+
+    fn handle_with_files(&self, request: &Envelope, files: Vec<OwnedFd>) -> Outcome {
+        drop(files);
+        self.handle(request)
+    }
 }
 
 struct Slot(Arc<AtomicUsize>);
@@ -197,7 +202,7 @@ fn handle_connection(
 ) -> Result<()> {
     stream.set_read_timeout(Some(REPLY_DEADLINE))?;
     stream.set_write_timeout(Some(REPLY_DEADLINE))?;
-    let request = read_frame(&mut stream)?;
+    let (request, files) = read_frame_with_files(&mut stream)?;
     if request.kind != Kind::Call {
         let e = Envelope::error(
             &request,
@@ -224,7 +229,7 @@ fn handle_connection(
         },
         _ => None,
     };
-    let outcome = handler.handle(&request);
+    let outcome = handler.handle_with_files(&request, files);
     drop(ticket);
     match outcome {
         Outcome::Reply(reply) => {
@@ -244,6 +249,7 @@ fn handle_connection(
 mod tests {
     use super::*;
     use crate::client::call;
+    use crate::frame::read_frame;
     use crate::testutil::TempDir;
     use crate::topic::subscribe;
     use std::time::Duration;
@@ -568,5 +574,109 @@ mod tests {
     #[test]
     fn systemd_listener_refuses_to_start_without_activation() {
         assert!(matches!(Listener::from_systemd(), Err(Error::Protocol(_))));
+    }
+
+    struct Reader;
+
+    impl Handler for Reader {
+        fn handle(&self, req: &Envelope) -> Outcome {
+            Outcome::Reply(Envelope::reply(req, &"no files").unwrap())
+        }
+
+        fn handle_with_files(&self, req: &Envelope, files: Vec<OwnedFd>) -> Outcome {
+            use std::io::Read;
+            let mut text = String::new();
+            for f in files {
+                let mut s = String::new();
+                std::fs::File::from(f).read_to_string(&mut s).unwrap();
+                text.push_str(&s);
+            }
+            Outcome::Reply(Envelope::reply(req, &text).unwrap())
+        }
+    }
+
+    fn start_reader(dir: &TempDir, name: &str) -> std::path::PathBuf {
+        let sock = dir.sock(name);
+        let listener = Listener::bind(&sock).unwrap();
+        thread::spawn(move || serve(listener, Arc::new(Reader)));
+        sock
+    }
+
+    fn file_with(dir: &TempDir, name: &str, text: &str) -> (std::path::PathBuf, std::fs::File) {
+        let p = dir.path().join(name);
+        std::fs::write(&p, text).unwrap();
+        let f = std::fs::File::open(&p).unwrap();
+        (p, f)
+    }
+
+    #[test]
+    fn a_call_hands_over_an_open_file_and_the_handler_reads_it() {
+        use crate::client::send_with_files;
+        use std::os::fd::AsFd;
+        let d = TempDir::new();
+        let sock = start_reader(&d, "r1");
+        let (_, f) = file_with(&d, "a.txt", "contents of a");
+        let req = Envelope::call("read", &0u8).unwrap();
+        let reply = send_with_files(&sock, &req, &[f.as_fd()], Duration::from_secs(5)).unwrap();
+        assert_eq!(reply.body_as::<String>().unwrap(), "contents of a");
+    }
+
+    #[test]
+    fn a_file_deleted_right_after_the_call_is_sent_is_still_read_in_full() {
+        use std::os::fd::AsFd;
+        let d = TempDir::new();
+        let sock = start_reader(&d, "r2");
+        let (p, f) = file_with(&d, "gone.txt", "survives deletion");
+        let req = Envelope::call("read", &0u8).unwrap();
+        let mut s = UnixStream::connect(&sock).unwrap();
+        crate::frame::write_frame_with_files(&mut s, &req, &[f.as_fd()]).unwrap();
+        drop(f);
+        std::fs::remove_file(&p).unwrap();
+        let reply = read_frame(&mut s).unwrap();
+        assert_eq!(reply.body_as::<String>().unwrap(), "survives deletion");
+    }
+
+    #[test]
+    fn a_handler_that_ignores_files_still_answers_and_the_files_are_closed() {
+        use crate::client::send_with_files;
+        use std::os::fd::AsFd;
+        let d = TempDir::new();
+        let (sock, _) = start(&d);
+        let (_, f) = file_with(&d, "x.txt", "x");
+        let req = Envelope::call("echo", &"hi").unwrap();
+        let reply = send_with_files(&sock, &req, &[f.as_fd()], Duration::from_secs(5)).unwrap();
+        assert_eq!(reply.body_as::<String>().unwrap(), "hi");
+    }
+
+    #[test]
+    fn calls_without_files_still_work_on_the_same_server() {
+        let d = TempDir::new();
+        let sock = start_reader(&d, "r3");
+        let reply = call(&sock, "read", &0u8).unwrap();
+        assert_eq!(reply.body_as::<String>().unwrap(), "");
+    }
+
+    #[test]
+    fn a_message_that_says_it_carries_files_but_sends_none_is_dropped_without_hanging_the_server() {
+        let d = TempDir::new();
+        let sock = start_reader(&d, "r4");
+        let mut liar = Envelope::call("read", &0u8).unwrap();
+        liar.fds = 2;
+        let mut s = UnixStream::connect(&sock).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        write_frame(&mut s, &liar).unwrap();
+        s.shutdown(std::net::Shutdown::Write).unwrap();
+        assert!(read_frame(&mut s).is_err());
+        let ok = call(&sock, "read", &0u8).unwrap();
+        assert_eq!(ok.body_as::<String>().unwrap(), "");
+    }
+
+    #[test]
+    fn a_plain_reader_refuses_a_frame_that_carries_files() {
+        let mut env = Envelope::call("x", &0u8).unwrap();
+        env.fds = 1;
+        let mut wire = Vec::new();
+        write_frame(&mut wire, &env).unwrap();
+        assert!(read_frame(&mut wire.as_slice()).is_err());
     }
 }

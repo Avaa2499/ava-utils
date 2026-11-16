@@ -25,6 +25,8 @@ pub struct Envelope {
     pub body: Value,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub hops: u8,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub fds: u8,
 }
 
 pub const MAX_HOPS: u8 = 16;
@@ -58,6 +60,7 @@ impl Envelope {
             name: name.to_string(),
             body: to_body(body)?,
             hops: 0,
+            fds: 0,
         })
     }
 
@@ -68,6 +71,7 @@ impl Envelope {
             name: name.to_string(),
             body: to_body(body)?,
             hops: 0,
+            fds: 0,
         })
     }
 
@@ -78,6 +82,7 @@ impl Envelope {
             name: name.to_string(),
             body: to_body(body)?,
             hops: 0,
+            fds: 0,
         })
     }
 
@@ -88,6 +93,7 @@ impl Envelope {
             name: to.name.clone(),
             body: to_body(body)?,
             hops: 0,
+            fds: 0,
         })
     }
 
@@ -101,6 +107,7 @@ impl Envelope {
                 message: message.to_string(),
             })?,
             hops: 0,
+            fds: 0,
         })
     }
 

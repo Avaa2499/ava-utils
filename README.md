@@ -149,7 +149,7 @@ All directives verified present in systemd 259 on this machine. `RestartSteps=` 
 
 ## Rules for every module
 
-1. Pass references (paths), never bulk bytes over a socket. Handing over file handles gets built when a module first needs it.
+1. Pass references (paths), never bulk bytes over a socket. When a file must stay readable even if it is deleted or moved meanwhile, hand over the open file instead: a call can carry 1 to 8 open files (`SCM_RIGHTS`, `client::send_with_files`). The envelope's optional `fds` box says how many follow the frame; the server gives them to `Handler::handle_with_files`, and the default drops them, so a module that does not want files ignores them. Only calls carry files, never replies or events. A reader that cannot take files (`read_frame`) refuses a frame that has them. Received files are close-on-exec.
 2. Every call has a deadline; every caller handles `Unavailable`.
 3. Every module is heavily tested. Install runs its tests automatically, including a `kill -9` crash test: killed mid-job, it comes back and nothing else is affected.
 4. tokio only in each module's runnable program. Libraries stay plain Rust.

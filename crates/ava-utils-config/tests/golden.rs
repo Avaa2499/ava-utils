@@ -121,6 +121,7 @@ fn envelope(kind: Kind, name: &str, body: Value) -> Envelope {
         name: name.into(),
         body,
         hops: 0,
+        fds: 0,
     }
 }
 
@@ -333,6 +334,16 @@ fn every_message_keeps_its_exact_wire_format() {
         },
         envelope(Kind::Event, "files-changed", Value::Nil),
         &["body", "hops"],
+        s,
+    );
+    check(
+        "envelope-call-fds",
+        Envelope {
+            fds: 2,
+            ..envelope(Kind::Call, "files-changed", Value::Nil)
+        },
+        envelope(Kind::Call, "files-changed", Value::Nil),
+        &["body", "fds"],
         s,
     );
     let error = Envelope::error(&call, "bad-request", "usage: scan <folder>").unwrap();

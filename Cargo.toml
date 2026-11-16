@@ -11,6 +11,7 @@ license-file = "LICENSE"
 [workspace.dependencies]
 ava-utils-config = { path = "crates/ava-utils-config" }
 getrandom = "0.4"
+libc = "0.2"
 notify = "8"
 redb = "4"
 rmp-serde = "1.3"

@@ -1,3 +1,4 @@
+use std::os::fd::BorrowedFd;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -6,7 +7,7 @@ use serde::Serialize;
 
 use crate::envelope::Envelope;
 use crate::error::{Error, Result};
-use crate::frame::{read_frame, write_frame};
+use crate::frame::{read_frame, write_frame, write_frame_with_files};
 
 const JITTER_RANGE: f64 = 0.2;
 
@@ -37,6 +38,31 @@ pub fn send(socket: &Path, request: &Envelope, deadline: Duration) -> Result<Env
     let mut stream = UnixStream::connect(socket)?;
     stream.set_write_timeout(Some(deadline))?;
     write_frame(&mut stream, request)?;
+    let left = deadline
+        .checked_sub(started.elapsed())
+        .filter(|d| !d.is_zero())
+        .ok_or(Error::Timeout)?;
+    stream.set_read_timeout(Some(left))?;
+    let reply = read_frame(&mut stream)?;
+    if reply.id != request.id {
+        return Err(Error::Protocol(format!(
+            "reply id {} does not match request id {}",
+            reply.id, request.id
+        )));
+    }
+    reply.into_result()
+}
+
+pub fn send_with_files(
+    socket: &Path,
+    request: &Envelope,
+    files: &[BorrowedFd<'_>],
+    deadline: Duration,
+) -> Result<Envelope> {
+    let started = Instant::now();
+    let mut stream = UnixStream::connect(socket)?;
+    stream.set_write_timeout(Some(deadline))?;
+    write_frame_with_files(&mut stream, request, files)?;
     let left = deadline
         .checked_sub(started.elapsed())
         .filter(|d| !d.is_zero())

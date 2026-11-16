@@ -2,6 +2,7 @@ pub mod client;
 pub mod dedup;
 pub mod envelope;
 pub mod error;
+pub mod fdpass;
 pub mod flags;
 pub mod frame;
 pub mod id;

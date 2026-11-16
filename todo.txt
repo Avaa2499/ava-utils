@@ -23,10 +23,6 @@ USER IDEAS: none open.
    From the reviews (qwen4max, gemma, others). `au list` already shows enabled/running per module. Add active jobs, subscriber counts and queue depths, without starting anything that is stopped.
    Done when: `au status` prints one line per installed module with those columns.
 
-10. [2] Pass file handles over sockets (SCM_RIGHTS)
-   From the reviews (gemini, qwen4max). Stops a file being deleted or moved while another module reads it. The README defers this until a module first needs it; compression is the likely first.
-   Done when: a call can hand over an open file, with tests for a deleted-after-handover file.
-
 11. [1] Measure the cost of named boxes in MessagePack
    From the reviews (copilot, random). The format is frozen, so this is only a measurement.
    Done when: the README records bytes and time per message for a 50,000-path batch.
@@ -47,9 +43,9 @@ USER IDEAS: none open.
    Example: .mkv to .mp4. A long job with progress and cancel. Needs 13.
 
 17. [2] Module: compression
-   Likely first user of file-handle passing (item 10). Done when: a file round-trips through compress and decompress.
+   Likely first user of file-handle passing (built: `client::send_with_files`). Done when: a file round-trips through compress and decompress.
 
-Reviews to delete once their items above are done: copilotreview (11), geminireview (10), gemma-26ba4breview (8), qwen4maxreview (8, 10).
+Reviews to delete once their items above are done: copilotreview (11), geminireview (none left: delete), gemma-26ba4breview (8), qwen4maxreview (8).
 
 
 # Open questions

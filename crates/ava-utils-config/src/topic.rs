@@ -97,6 +97,7 @@ impl Publisher {
             name: self.topic.clone(),
             body: to_value(event)?,
             hops,
+            fds: 0,
         };
         let mut inner = self.lock();
         inner.subs.retain(|sub| match sub.tx.try_send(env.clone()) {
@@ -121,6 +122,7 @@ impl Publisher {
                 name: request.name.clone(),
                 body: inner.state.clone(),
                 hops: 0,
+                fds: 0,
             };
             tx.try_send(first)
                 .map_err(|_| Error::Protocol("subscriber queue refused the state".into()))?;
