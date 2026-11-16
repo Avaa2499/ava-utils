@@ -1,0 +1,9 @@
+[package]
+name = "ava-utils-file-searcher"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license-file.workspace = true
+
+[dependencies]
+ava-utils-config.workspace = true

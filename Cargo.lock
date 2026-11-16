@@ -37,6 +37,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ava-utils-file-searcher"
+version = "0.1.0"
+dependencies = [
+ "ava-utils-config",
+]
+
+[[package]]
 name = "ava-utils-toy"
 version = "0.1.0"
 dependencies = [
