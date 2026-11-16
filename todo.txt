@@ -17,16 +17,13 @@ Scoring:
 
 ----
 
-1. [2] `ava-utils-file-searcher`. Query logic; asks the file-indexer for records.
-   Done when: a search from the cli returns results and starts both modules on demand.
-
-2. [2] `ava-utils-file-watcher`. Batched "files changed" messages; the file-indexer applies them.
+1. [2] `ava-utils-file-watcher`. Batched "files changed" messages; the file-indexer applies them.
    Done when: a new file shows up in search without a rescan.
 
-3. [2] Freeze the message format.
+2. [2] Freeze the message format.
    Done when: three modules work together.
 
-4. [2] Install `au` itself into `~/.local/bin` (it is on PATH already; today `au` only runs from `target/release/au`). Likely a `just install` recipe or a bootstrap command, since `au install` can't install itself before it exists.
+3. [2] Install `au` itself into `~/.local/bin` (it is on PATH already; today `au` only runs from `target/release/au`). Likely a `just install` recipe or a bootstrap command, since `au install` can't install itself before it exists.
    Done when: typing `au` in a fresh shell works.
 
 
