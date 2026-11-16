@@ -1,0 +1,15 @@
+module = "file-watcher"
+answers = ["run-command", "watch-set-roots"]
+sends = ["files-changed"]
+
+[[commands]]
+name = "add"
+help = "Watch folders: add <folder>..."
+
+[[commands]]
+name = "remove"
+help = "Stop watching folders: remove <folder>..."
+
+[[commands]]
+name = "list"
+help = "List watched folders"
