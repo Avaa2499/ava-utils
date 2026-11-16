@@ -1,7 +1,8 @@
 use ava_utils_config::error::{Error, Result};
 use ava_utils_config::manifest::Manifest;
 
-pub const BUILTINS: [&str; 8] = [
+pub const BUILTINS: [&str; 9] = [
+    "status",
     "install",
     "remove",
     "check",
@@ -114,6 +115,7 @@ mod tests {
                 "install",
                 "list",
                 "remove",
+                "status",
                 "web-searcher"
             ]
         );

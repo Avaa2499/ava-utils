@@ -19,10 +19,6 @@ Scoring:
 
 USER IDEAS: none open.
 
-8. [2] `au status`: detail beyond `au list`
-   From the reviews (qwen4max, gemma, others). `au list` already shows enabled/running per module. Add active jobs, subscriber counts and queue depths, without starting anything that is stopped.
-   Done when: `au status` prints one line per installed module with those columns.
-
 12. [2] Module: gui (status bar and live updates)
    Needs an `index-changed` topic from the indexer, and `loop_partners` naming in the gui, file-watcher and file-indexer manifests (see Cycles in the README). Done when: a window shows live indexer state with no polling.
 
@@ -41,7 +37,7 @@ USER IDEAS: none open.
 17. [2] Module: compression
    Likely first user of file-handle passing (built: `client::send_with_files`). Done when: a file round-trips through compress and decompress.
 
-Reviews to delete once their items above are done: gemma-26ba4breview (8), qwen4maxreview (8).
+Reviews to delete once their items above are done: none left (all reviews actioned).
 
 
 # Open questions

@@ -1,17 +1,19 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use ava_utils_config::client::call;
+use ava_utils_config::client::{self, call};
 use ava_utils_config::error::{Error, Result};
 use ava_utils_config::manifest::{Manifest, load_all};
-use ava_utils_config::messages::{RUN_COMMAND, RunCommand};
+use ava_utils_config::messages::{CommandOutput, RUN_COMMAND, RunCommand};
 use ava_utils_config::paths::{Dirs, check_module_name};
+use ava_utils_config::server::HEALTH;
 
 use crate::loops;
 use crate::systemd::{self, Runner};
 use crate::units;
 
-pub const RESERVED: [&str; 8] = [
+pub const RESERVED: [&str; 9] = [
+    "status",
     "install",
     "remove",
     "check",
@@ -249,22 +251,117 @@ pub fn list(sys: &impl Runner, modules: &[String]) -> String {
         .iter()
         .map(|m| {
             let (enabled, status) = match systemd::module_state(sys, m) {
-                Ok(s) => {
-                    let status = match s.service.as_str() {
-                        "active" => "running",
-                        "activating" | "reloading" => "starting",
-                        "failed" => "failed",
-                        _ if s.socket_active => "idle (starts on first call)",
-                        _ => "stopped",
-                    };
-                    (if s.enabled { "enabled" } else { "disabled" }, status)
-                }
+                Ok(s) => (
+                    if s.enabled { "enabled" } else { "disabled" },
+                    state_text(&s),
+                ),
                 Err(_) => ("unknown", "systemd did not answer"),
             };
             format!("{m:<width$}  {enabled:<8}  {status}")
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+pub struct Health {
+    pub pid: String,
+    pub uptime: String,
+    pub connections: String,
+    pub watching: String,
+    pub refused: String,
+}
+
+pub trait HealthProbe {
+    fn health(&self, module: &str) -> Option<Health>;
+}
+
+pub struct SocketHealth(pub Dirs);
+
+impl HealthProbe for SocketHealth {
+    fn health(&self, module: &str) -> Option<Health> {
+        let sock = self.0.socket(module).ok()?;
+        let reply = client::call(
+            &sock,
+            RUN_COMMAND,
+            &RunCommand {
+                args: vec![HEALTH.to_string()],
+            },
+        )
+        .ok()?;
+        parse_health(&reply.body_as::<CommandOutput>().ok()?.text)
+    }
+}
+
+pub fn parse_health(text: &str) -> Option<Health> {
+    let get = |key: &str| {
+        text.split_whitespace()
+            .find_map(|w| w.strip_prefix(key).and_then(|v| v.strip_prefix('=')))
+            .map(str::to_string)
+    };
+    Some(Health {
+        pid: get("pid")?,
+        uptime: get("uptime")?.parse().ok().map(short_uptime)?,
+        connections: get("connections")?,
+        watching: get("watching")?,
+        refused: get("refused")?,
+    })
+}
+
+pub fn short_uptime(secs: u64) -> String {
+    match secs {
+        0..=59 => format!("{secs}s"),
+        60..=3599 => format!("{}m", secs / 60),
+        3600..=86399 => format!("{}h{}m", secs / 3600, (secs % 3600) / 60),
+        _ => format!("{}d{}h", secs / 86400, (secs % 86400) / 3600),
+    }
+}
+
+pub fn status(sys: &impl Runner, probe: &impl HealthProbe, modules: &[String]) -> String {
+    if modules.is_empty() {
+        return "no modules installed".to_string();
+    }
+    let width = modules.iter().map(String::len).max().unwrap_or(0);
+    let mut out = format!(
+        "{:<width$}  {:<8}  {:<28}  {:>7}  {:>6}  {:>5}  {:>8}  {:>7}\n",
+        "module", "enabled", "state", "pid", "up", "conns", "watching", "refused"
+    );
+    let rows: Vec<String> = modules
+        .iter()
+        .map(|m| {
+            let Ok(s) = systemd::module_state(sys, m) else {
+                return format!("{m:<width$}  unknown   systemd did not answer");
+            };
+            let state = state_text(&s);
+            let enabled = if s.enabled { "enabled" } else { "disabled" };
+            let h = if s.service == "active" {
+                probe.health(m)
+            } else {
+                None
+            };
+            match h {
+                Some(h) => format!(
+                    "{m:<width$}  {enabled:<8}  {state:<28}  {:>7}  {:>6}  {:>5}  {:>8}  {:>7}",
+                    h.pid, h.uptime, h.connections, h.watching, h.refused
+                ),
+                None => format!(
+                    "{m:<width$}  {enabled:<8}  {state:<28}  {:>7}  {:>6}  {:>5}  {:>8}  {:>7}",
+                    "-", "-", "-", "-", "-"
+                ),
+            }
+        })
+        .collect();
+    out.push_str(&rows.join("\n"));
+    out
+}
+
+fn state_text(s: &systemd::ModuleState) -> &'static str {
+    match s.service.as_str() {
+        "active" => "running",
+        "activating" | "reloading" => "starting",
+        "failed" => "failed",
+        _ if s.socket_active => "idle (starts on first call)",
+        _ => "stopped",
+    }
 }
 
 pub fn remove(layout: &Layout, sys: &impl Runner, module: &str) -> Result<()> {

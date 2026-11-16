@@ -4,6 +4,7 @@ const BUILT_IN: &str =
     "au install <module>     build, test, loop-check and install a module from this workspace
 au remove <module>      stop and remove a module
 au list                show every installed module: enabled or disabled, running or idle
+au status              like list, plus pid, uptime, open connections and quarantined requests of running modules
 au enable <module>      start the module's socket and keep it enabled
 au disable <module>     pause a module: stop it and keep it off until `au enable`
 au check                check the installed manifests for loops

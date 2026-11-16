@@ -64,6 +64,8 @@ pub trait Handler: Send + Sync + 'static {
     }
 }
 
+pub const HEALTH: &str = "health";
+
 struct Slot(Arc<AtomicUsize>);
 
 impl Drop for Slot {
@@ -75,6 +77,8 @@ impl Drop for Slot {
 struct Policy {
     guard: Option<Arc<Guard>>,
     cache: ReplyCache,
+    started: std::time::Instant,
+    open: Arc<AtomicUsize>,
 }
 
 pub fn serve<H: Handler>(listener: Listener, handler: Arc<H>) {
@@ -100,11 +104,13 @@ pub fn serve_guarded<H: Handler>(listener: Listener, handler: Arc<H>, guard: Arc
 }
 
 fn serve_with<H: Handler>(listener: Listener, handler: Arc<H>, guard: Option<Arc<Guard>>) {
+    let open = Arc::new(AtomicUsize::new(0));
     let policy = Arc::new(Policy {
         guard,
         cache: ReplyCache::default(),
+        started: std::time::Instant::now(),
+        open: open.clone(),
     });
-    let open = Arc::new(AtomicUsize::new(0));
     for conn in listener.0.incoming() {
         let Ok(stream) = conn else { continue };
         if open.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
@@ -127,7 +133,7 @@ pub fn request_key(req: &Envelope) -> Option<(String, String)> {
     }
     let label = if req.name == RUN_COMMAND {
         let c = req.body_as::<RunCommand>().ok()?;
-        if c.args.is_empty() || c.args[0] == "quarantine" {
+        if c.args.is_empty() || c.args[0] == "quarantine" || c.args[0] == HEALTH {
             return None;
         }
         c.args.join(" ")
@@ -140,6 +146,28 @@ pub fn request_key(req: &Envelope) -> Option<(String, String)> {
     rmpv::encode::write_value(&mut body, &req.body).ok()?;
     body.hash(&mut h);
     Some((format!("{:016x}", h.finish()), label))
+}
+
+fn health_command(policy: &Policy, req: &Envelope) -> Option<Result<Envelope>> {
+    if req.name != RUN_COMMAND {
+        return None;
+    }
+    let args = req.body_as::<RunCommand>().ok()?.args;
+    if args.as_slice() != [HEALTH] {
+        return None;
+    }
+    let (watching, refused) = policy.guard.as_ref().map_or((0, 0), |g| {
+        let all = g.status();
+        let refused = all.iter().filter(|e| e.refused_for.is_some()).count();
+        (all.len() - refused, refused)
+    });
+    let text = format!(
+        "pid={} uptime={} connections={} watching={watching} refused={refused}",
+        std::process::id(),
+        policy.started.elapsed().as_secs(),
+        policy.open.load(Ordering::SeqCst),
+    );
+    Some(Envelope::reply(req, &CommandOutput { text, job: None }))
 }
 
 fn quarantine_command(guard: &Guard, req: &Envelope) -> Option<Result<Envelope>> {
@@ -210,6 +238,9 @@ fn handle_connection(
             "only calls are accepted here",
         )?;
         return write_frame(&mut stream, &e);
+    }
+    if let Some(reply) = health_command(policy, &request) {
+        return write_frame(&mut stream, &reply?);
     }
     if let Some(guard) = &policy.guard
         && let Some(reply) = quarantine_command(guard, &request)
@@ -678,5 +709,55 @@ mod tests {
         let mut wire = Vec::new();
         write_frame(&mut wire, &env).unwrap();
         assert!(read_frame(&mut wire.as_slice()).is_err());
+    }
+
+    #[test]
+    fn health_reports_pid_uptime_connections_and_quarantine_counts() {
+        let d = TempDir::new();
+        let guard = Guard::open(&d.path().join("g")).unwrap();
+        let (sock, _) = start_counting(&d, Some(guard));
+        let reply = call(
+            &sock,
+            RUN_COMMAND,
+            &RunCommand {
+                args: vec![HEALTH.into()],
+            },
+        )
+        .unwrap();
+        let text = reply.body_as::<CommandOutput>().unwrap().text;
+        assert!(
+            text.contains(&format!("pid={}", std::process::id())),
+            "{text}"
+        );
+        for key in ["uptime=", "connections=1", "watching=0", "refused=0"] {
+            assert!(text.contains(key), "{text}");
+        }
+    }
+
+    #[test]
+    fn health_is_never_tracked_or_refused_and_leaves_no_strikes() {
+        let key = request_key(
+            &Envelope::call(
+                RUN_COMMAND,
+                &RunCommand {
+                    args: vec![HEALTH.into()],
+                },
+            )
+            .unwrap(),
+        );
+        assert!(key.is_none());
+    }
+
+    #[test]
+    fn a_module_command_that_merely_starts_with_health_still_reaches_the_module() {
+        let d = TempDir::new();
+        let (sock, _) = start_counting(&d, None);
+        let args = vec![HEALTH.into(), "more".into()];
+        let reply = call(&sock, RUN_COMMAND, &RunCommand { args }).unwrap();
+        assert_eq!(
+            reply.body_as::<u8>().unwrap(),
+            0,
+            "the module's own handler answered"
+        );
     }
 }
