@@ -21,6 +21,8 @@ pub struct JobRecord {
     pub entries: u64,
     pub dirs: u64,
     #[serde(default)]
+    pub skipped: u64,
+    #[serde(default)]
     pub error: Option<String>,
     pub updated: u64,
 }
@@ -106,6 +108,7 @@ impl Jobs {
             state: JobState::Running,
             entries: 0,
             dirs: 0,
+            skipped: 0,
             error: None,
             updated: now(),
         };
@@ -158,6 +161,7 @@ impl Jobs {
             );
             rec.entries += thread_ctl.entries.load(Ordering::SeqCst);
             rec.dirs += thread_ctl.dirs.load(Ordering::SeqCst);
+            rec.skipped += thread_ctl.skipped.load(Ordering::SeqCst);
             rec.updated = now();
             match result {
                 Ok(ScanEnd::Completed) => rec.state = JobState::Done,
@@ -209,6 +213,7 @@ impl Jobs {
                 r.ctl.dirs.load(Ordering::SeqCst),
                 r.ctl.entries.load(Ordering::SeqCst),
                 r.ctl.started.elapsed().as_secs_f64(),
+                r.ctl.skipped.load(Ordering::SeqCst),
             )
         });
         if rec.state == JobState::Running && live.is_none() {
@@ -217,13 +222,31 @@ impl Jobs {
             rec.updated = now();
             save(&self.index, &rec)?;
         }
+        let skip_note = |n: u64| {
+            if n > 0 {
+                format!("; {n} skipped (name not valid UTF-8)")
+            } else {
+                String::new()
+            }
+        };
         let detail = match (live, &rec.error) {
-            (Some((dirs, entries, secs)), _) => format!(
-                "{dirs} folders walked, {entries} entries saved so far ({:.0} folders/s)",
-                dirs as f64 / secs.max(0.001)
+            (Some((dirs, entries, secs, skipped)), _) => format!(
+                "{dirs} folders walked, {entries} entries saved so far ({:.0} folders/s){}",
+                dirs as f64 / secs.max(0.001),
+                skip_note(skipped)
             ),
-            (None, Some(e)) => format!("{} entries, {} folders; {e}", rec.entries, rec.dirs),
-            (None, None) => format!("{} entries, {} folders", rec.entries, rec.dirs),
+            (None, Some(e)) => format!(
+                "{} entries, {} folders{}; {e}",
+                rec.entries,
+                rec.dirs,
+                skip_note(rec.skipped)
+            ),
+            (None, None) => format!(
+                "{} entries, {} folders{}",
+                rec.entries,
+                rec.dirs,
+                skip_note(rec.skipped)
+            ),
         };
         Ok(JobStatus {
             job: rec.id,
@@ -322,6 +345,7 @@ mod tests {
             state: JobState::Done,
             entries: 0,
             dirs: 0,
+            skipped: 0,
             error: None,
             updated: 1,
         };
@@ -329,6 +353,70 @@ mod tests {
         let jobs = Jobs::new(ix, 1).unwrap();
         let e = jobs.cancel("d0ne01", CancelMode::Safe).unwrap_err();
         assert!(e.to_string().contains("not running"), "{e}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_job_reports_how_many_non_utf8_names_it_skipped() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let (dir, ix) = temp_index("jobs-utf8");
+        let root = tree("jobs-utf8");
+        std::fs::write(root.join(OsStr::from_bytes(b"na\xefve.txt")), b"x").unwrap();
+        let jobs = Jobs::new(Arc::new(ix), 2).unwrap();
+        let id = jobs
+            .start_scan(vec![root.to_string_lossy().into_owned()])
+            .unwrap();
+        let s = wait_state(&jobs, &id, JobState::Done);
+        assert!(
+            s.detail
+                .unwrap()
+                .contains("1 skipped (name not valid UTF-8)")
+        );
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_clean_job_does_not_mention_skipping() {
+        let (dir, ix) = temp_index("jobs-clean");
+        let root = tree("jobs-clean");
+        let jobs = Jobs::new(Arc::new(ix), 2).unwrap();
+        let id = jobs
+            .start_scan(vec![root.to_string_lossy().into_owned()])
+            .unwrap();
+        let s = wait_state(&jobs, &id, JobState::Done);
+        assert!(!s.detail.unwrap().contains("skipped"));
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn job_records_saved_before_the_skipped_box_existed_still_load() {
+        #[derive(serde::Serialize)]
+        struct Old {
+            id: String,
+            roots: Vec<String>,
+            generation: u64,
+            state: JobState,
+            entries: u64,
+            dirs: u64,
+            updated: u64,
+        }
+        let (dir, ix) = temp_index("jobs-old-record");
+        let old = Old {
+            id: "01d001".into(),
+            roots: vec![],
+            generation: 1,
+            state: JobState::Done,
+            entries: 5,
+            dirs: 2,
+            updated: 1,
+        };
+        ix.save_job("01d001", &rmp_serde::to_vec_named(&old).unwrap())
+            .unwrap();
+        let rec = load(&ix, "01d001").unwrap();
+        assert_eq!((rec.skipped, rec.error, rec.entries), (0, None, 5));
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -360,6 +448,7 @@ mod tests {
             state: JobState::Running,
             entries: 0,
             dirs: 0,
+            skipped: 0,
             error: None,
             updated: 1,
         };

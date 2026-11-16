@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -9,7 +10,7 @@ use ava_utils_config::topic::Publisher;
 use crate::batch::{Change, Journal};
 use crate::limit::{self, Limit};
 use crate::roots::Roots;
-use crate::watch::{Watch, start};
+use crate::watch::{SKIPPED_NON_UTF8, Watch, start};
 
 pub const EAGER_STATE_MAX: usize = 100_000;
 
@@ -111,10 +112,18 @@ impl Service {
     pub fn run_command(&self, args: &[String]) -> Result<String> {
         let rest = args.get(1..).unwrap_or(&[]);
         match args.first().map(String::as_str) {
-            None => Ok(format!(
-                "file-watcher is up. watching {} folders. commands: add <folder>..., remove <folder>..., list, journal [limit]",
-                self.roots().len()
-            )),
+            None => {
+                let skipped = SKIPPED_NON_UTF8.load(Ordering::SeqCst);
+                let note = if skipped > 0 {
+                    format!(" {skipped} changes skipped (name not valid UTF-8).")
+                } else {
+                    String::new()
+                };
+                Ok(format!(
+                    "file-watcher is up. watching {} folders.{note} commands: add <folder>..., remove <folder>..., list, journal [limit]",
+                    self.roots().len()
+                ))
+            }
             Some("list") => {
                 let r = self.roots();
                 Ok(if r.is_empty() {

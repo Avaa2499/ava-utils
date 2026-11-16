@@ -19,6 +19,7 @@ pub struct ScanControl {
     pub cancel: AtomicU8,
     pub entries: AtomicU64,
     pub dirs: AtomicU64,
+    pub skipped: AtomicU64,
     pub started: Instant,
     pub pause_per_dir: Duration,
     pub batch_entries: usize,
@@ -30,6 +31,7 @@ impl ScanControl {
             cancel: AtomicU8::new(RUN),
             entries: AtomicU64::new(0),
             dirs: AtomicU64::new(0),
+            skipped: AtomicU64::new(0),
             started: Instant::now(),
             pause_per_dir: Duration::ZERO,
             batch_entries: BATCH_ENTRIES,
@@ -41,6 +43,7 @@ impl ScanControl {
             cancel: AtomicU8::new(RUN),
             entries: AtomicU64::new(0),
             dirs: AtomicU64::new(0),
+            skipped: AtomicU64::new(0),
             started: Instant::now(),
             pause_per_dir,
             batch_entries: BATCH_ENTRIES,
@@ -70,13 +73,17 @@ fn lock(m: &Mutex<Shared>) -> MutexGuard<'_, Shared> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn walk_level(dir: &str, exclusions: &[String], generation: u64) -> (Walk, Vec<String>) {
+fn walk_level(dir: &str, exclusions: &[String], generation: u64) -> (Walk, Vec<String>, u64) {
+    let mut skipped = 0;
     let mut entries = Vec::new();
     let mut subdirs = Vec::new();
     if let Ok(rd) = std::fs::read_dir(dir) {
         for e in rd.flatten() {
             let path = e.path();
-            let Some(ps) = path.to_str() else { continue };
+            let Some(ps) = path.to_str() else {
+                skipped += 1;
+                continue;
+            };
             if is_virtual(&path) {
                 continue;
             }
@@ -96,6 +103,7 @@ fn walk_level(dir: &str, exclusions: &[String], generation: u64) -> (Walk, Vec<S
             entries,
         },
         subdirs,
+        skipped,
     )
 }
 
@@ -172,7 +180,8 @@ pub fn run_scan(
                 if !ctl.pause_per_dir.is_zero() {
                     thread::sleep(ctl.pause_per_dir);
                 }
-                let (walk, subdirs) = walk_level(&dir, &exclusions, generation);
+                let (walk, subdirs, skipped) = walk_level(&dir, &exclusions, generation);
+                ctl.skipped.fetch_add(skipped, Ordering::SeqCst);
                 {
                     let mut g = lock(&shared.0);
                     g.queue.extend(subdirs);
@@ -330,6 +339,59 @@ mod tests {
     }
 
     #[test]
+    fn names_that_are_not_utf8_are_skipped_and_counted_not_silently_lost() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let (dir, ix) = temp_index("scan-utf8");
+        let ix = Arc::new(ix);
+        let root = build_tree("scan-utf8", 1, 1);
+        std::fs::write(root.join(OsStr::from_bytes(b"caf\xe9.txt")), b"x").unwrap();
+        let bad_dir = root.join(OsStr::from_bytes(b"bad\xffdir"));
+        std::fs::create_dir_all(&bad_dir).unwrap();
+        std::fs::write(bad_dir.join("inside.txt"), b"x").unwrap();
+        let ctl = ScanControl::new();
+        let r = s(&root);
+        let end = run_scan(
+            &ix,
+            "job",
+            std::slice::from_ref(&r),
+            vec![r.clone()],
+            1,
+            &ctl,
+            2,
+        )
+        .unwrap();
+        assert_eq!(end, ScanEnd::Completed);
+        assert_eq!(ctl.skipped.load(Ordering::SeqCst), 2);
+        assert_eq!(ix.count().unwrap(), expected_entries(1, 1));
+        assert!(ix.get(&s(&root.join("f.txt"))).unwrap().is_some());
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_clean_tree_skips_nothing() {
+        let (dir, ix) = temp_index("scan-clean");
+        let ix = Arc::new(ix);
+        let root = build_tree("scan-clean", 2, 2);
+        let ctl = ScanControl::new();
+        let r = s(&root);
+        run_scan(
+            &ix,
+            "job",
+            std::slice::from_ref(&r),
+            vec![r.clone()],
+            1,
+            &ctl,
+            2,
+        )
+        .unwrap();
+        assert_eq!(ctl.skipped.load(Ordering::SeqCst), 0);
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn excluded_folders_are_not_entered() {
         let (dir, ix) = temp_index("scan-excl");
         let ix = Arc::new(ix);
@@ -424,6 +486,7 @@ mod tests {
             cancel: AtomicU8::new(RUN),
             entries: AtomicU64::new(0),
             dirs: AtomicU64::new(0),
+            skipped: AtomicU64::new(0),
             started: Instant::now(),
             pause_per_dir: Duration::from_millis(3),
             batch_entries: 10,

@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 
 use ava_utils_config::error::{Error, Result};
@@ -8,6 +9,12 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use crate::batch::Change;
 
 pub const NEW_FOLDER_LIST_CAP: usize = 100_000;
+
+pub static SKIPPED_NON_UTF8: AtomicU64 = AtomicU64::new(0);
+
+fn skip() {
+    SKIPPED_NON_UTF8.fetch_add(1, Ordering::SeqCst);
+}
 
 pub struct Watch {
     _watcher: RecommendedWatcher,
@@ -25,8 +32,9 @@ pub fn list_tree(dir: &Path, cap: usize) -> Vec<String> {
                 return out;
             }
             let p = e.path();
-            if let Some(s) = p.to_str() {
-                out.push(s.to_string());
+            match p.to_str() {
+                Some(s) => out.push(s.to_string()),
+                None => skip(),
             }
             if e.file_type().is_ok_and(|t| t.is_dir()) {
                 todo.push(p);
@@ -37,7 +45,10 @@ pub fn list_tree(dir: &Path, cap: usize) -> Vec<String> {
 }
 
 fn exists_now(p: &Path, tx: &Sender<Change>, walk_new_dirs: bool) {
-    let Some(s) = p.to_str() else { return };
+    let Some(s) = p.to_str() else {
+        skip();
+        return;
+    };
     match std::fs::symlink_metadata(p) {
         Ok(meta) => {
             let _ = tx.send(Change::Changed(s.to_string()));
@@ -54,10 +65,11 @@ fn exists_now(p: &Path, tx: &Sender<Change>, walk_new_dirs: bool) {
 }
 
 pub fn translate(event: &Event, tx: &Sender<Change>) {
-    let removed = |p: &Path| {
-        if let Some(s) = p.to_str() {
+    let removed = |p: &Path| match p.to_str() {
+        Some(s) => {
             let _ = tx.send(Change::Removed(s.to_string()));
         }
+        None => skip(),
     };
     match &event.kind {
         EventKind::Access(_) => {}
@@ -179,6 +191,35 @@ mod tests {
         std::fs::write(d.join("ok.txt"), b"1").unwrap();
         wait_for(&rx, &Change::Changed(s(&d.join("ok.txt"))));
         let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn non_utf8_paths_are_counted_not_silently_dropped_and_do_not_stop_the_rest() {
+        use notify::event::{CreateKind, RemoveKind};
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let bad = std::path::PathBuf::from(OsStr::from_bytes(b"/var/tmp/au-fw-tests/caf\xe9.txt"));
+        let before = SKIPPED_NON_UTF8.load(Ordering::SeqCst);
+        let (tx, rx) = channel();
+        translate(
+            &Event::new(EventKind::Create(CreateKind::File)).add_path(bad.clone()),
+            &tx,
+        );
+        translate(
+            &Event::new(EventKind::Remove(RemoveKind::File)).add_path(bad),
+            &tx,
+        );
+        translate(
+            &Event::new(EventKind::Remove(RemoveKind::File))
+                .add_path("/var/tmp/au-fw-tests/ok.txt".into()),
+            &tx,
+        );
+        assert_eq!(SKIPPED_NON_UTF8.load(Ordering::SeqCst) - before, 2);
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            Change::Removed("/var/tmp/au-fw-tests/ok.txt".into())
+        );
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]

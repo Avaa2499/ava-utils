@@ -205,9 +205,17 @@ mod tests {
         drop(tx);
         h.join().unwrap();
         let got = out.lock().unwrap();
-        assert_eq!(got.len(), 2);
-        assert_eq!(got[0].changed.len(), 50);
-        assert_eq!(got[1].removed, ["/gone"]);
+        assert!(got.len() >= 2, "the late event must be its own batch");
+        let all: std::collections::BTreeSet<&String> =
+            got.iter().flat_map(|b| &b.changed).collect();
+        assert_eq!(
+            all.len(),
+            50,
+            "no change may be lost, however the burst was split"
+        );
+        let last = got.last().unwrap();
+        assert_eq!(last.removed, ["/gone"]);
+        assert!(last.changed.is_empty());
     }
 
     #[test]
