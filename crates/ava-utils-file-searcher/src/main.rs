@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ava_utils_config::client::call;
 use ava_utils_config::envelope::Envelope;
-use ava_utils_config::error::{Error, Result};
+use ava_utils_config::error::{Error, Result, codes};
 use ava_utils_config::manifest::Manifest;
 use ava_utils_config::messages::{
     CommandOutput, FILE_LOOKUP, FileLookup, FileLookupResult, RUN_COMMAND, RunCommand, SEARCH,
@@ -26,7 +26,15 @@ impl Searcher {
             .iter()
             .find(|b| b.message == FILE_LOOKUP)
             .ok_or_else(|| Error::Protocol(format!("manifest does not bind {FILE_LOOKUP}")))?;
-        call(&self.dirs.socket(&target.module)?, FILE_LOOKUP, q)?.body_as()
+        call(&self.dirs.socket(&target.module)?, FILE_LOOKUP, q)
+            .and_then(|r| r.body_as())
+            .map_err(|e| match e {
+                Error::Unavailable | Error::Timeout => Error::Remote {
+                    code: codes::UNAVAILABLE.into(),
+                    message: "the file index is not reachable".into(),
+                },
+                other => other,
+            })
     }
 }
 
@@ -42,15 +50,10 @@ impl Handler for Searcher {
                 .body_as::<Search>()
                 .and_then(|s| search(&mut lookup, &s))
                 .and_then(|r| Envelope::reply(req, &r)),
-            other => Envelope::error(req, "unknown-call", other),
+            other => Envelope::error(req, codes::UNKNOWN_CALL, other),
         };
         let reply = reply
-            .or_else(|e| match e {
-                Error::Unavailable | Error::Timeout => {
-                    Envelope::error(req, "unavailable", "the file index is not reachable")
-                }
-                e => Envelope::error(req, "failed", &e.to_string()),
-            })
+            .or_else(|e| Envelope::from_error(req, &e))
             .expect("replies always encode");
         Outcome::Reply(reply)
     }

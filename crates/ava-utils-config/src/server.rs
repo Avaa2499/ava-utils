@@ -84,7 +84,11 @@ fn handle_connection(mut stream: UnixStream, handler: &impl Handler) -> Result<(
     stream.set_write_timeout(Some(REPLY_DEADLINE))?;
     let request = read_frame(&mut stream)?;
     if request.kind != Kind::Call {
-        let e = Envelope::error(&request, "not-a-call", "only calls are accepted here")?;
+        let e = Envelope::error(
+            &request,
+            crate::error::codes::NOT_A_CALL,
+            "only calls are accepted here",
+        )?;
         return write_frame(&mut stream, &e);
     }
     match handler.handle(&request) {

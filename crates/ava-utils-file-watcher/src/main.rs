@@ -4,6 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 use ava_utils_config::envelope::Envelope;
+use ava_utils_config::error::codes;
 use ava_utils_config::messages::{
     CommandOutput, FILES_CHANGED, RUN_COMMAND, RunCommand, WATCH_SET_ROOTS, WatchSetRoots,
 };
@@ -37,11 +38,11 @@ impl Handler for Watcher {
                 .body_as::<WatchSetRoots>()
                 .and_then(|r| self.service.set_roots(&r.roots))
                 .and_then(|_| Envelope::reply(req, &())),
-            other => Envelope::error(req, "unknown-call", other),
+            other => Envelope::error(req, codes::UNKNOWN_CALL, other),
         };
         Outcome::Reply(
             reply
-                .or_else(|e| Envelope::error(req, "failed", &e.to_string()))
+                .or_else(|e| Envelope::from_error(req, &e))
                 .expect("replies always encode"),
         )
     }

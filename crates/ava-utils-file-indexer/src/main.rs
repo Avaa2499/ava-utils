@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use ava_utils_config::client::retry;
 use ava_utils_config::envelope::Envelope;
+use ava_utils_config::error::codes;
 use ava_utils_config::manifest::Manifest;
 use ava_utils_config::messages::{
     CommandOutput, FILE_LOOKUP, FILES_CHANGED, FilesChanged, JOB_CANCEL, JOB_PROGRESS, JobCancel,
@@ -38,10 +39,10 @@ impl Handler for Indexer {
                 .body_as()
                 .and_then(|q| s.file_lookup(&q))
                 .and_then(|r| Envelope::reply(req, &r)),
-            other => Envelope::error(req, "unknown-call", other),
+            other => Envelope::error(req, codes::UNKNOWN_CALL, other),
         };
         let reply = reply
-            .or_else(|e| Envelope::error(req, "failed", &e.to_string()))
+            .or_else(|e| Envelope::from_error(req, &e))
             .expect("replies always encode");
         Outcome::Reply(reply)
     }

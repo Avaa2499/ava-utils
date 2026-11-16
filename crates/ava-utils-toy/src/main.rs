@@ -14,9 +14,9 @@ impl Handler for Toy {
                     let text = ava_utils_toy::run_command(&c.args, std::process::id());
                     Envelope::reply(req, &CommandOutput { text, job: None })
                 })
-                .or_else(|e| Envelope::error(req, "bad-request", &e.to_string()))
+                .or_else(|e| Envelope::from_error(req, &e))
         } else {
-            Envelope::error(req, "unknown-call", &req.name)
+            Envelope::error(req, ava_utils_config::error::codes::UNKNOWN_CALL, &req.name)
         };
         Outcome::Reply(reply.expect("replies always encode"))
     }

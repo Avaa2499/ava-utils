@@ -82,6 +82,10 @@ impl Envelope {
         })
     }
 
+    pub fn from_error(to: &Envelope, e: &Error) -> Result<Self> {
+        Self::error(to, e.code(), &e.wire_message())
+    }
+
     pub fn body_as<T: DeserializeOwned>(&self) -> Result<T> {
         let mut bytes = Vec::new();
         rmpv::encode::write_value(&mut bytes, &self.body)

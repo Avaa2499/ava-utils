@@ -1,6 +1,7 @@
 use ava_utils_cli::app::dispatch;
 use ava_utils_cli::install::{Layout, SocketProbe};
 use ava_utils_cli::systemd::RealRunner;
+use ava_utils_config::error::{Error, codes};
 
 fn main() {
     let result = Layout::from_env().and_then(|layout| {
@@ -17,7 +18,14 @@ fn main() {
     match result {
         Ok(text) => println!("{text}"),
         Err(e) => {
-            eprintln!("au: {e}");
+            match &e {
+                Error::Remote { code, message }
+                    if code == codes::BAD_REQUEST || code == codes::FAILED =>
+                {
+                    eprintln!("au: {message}")
+                }
+                e => eprintln!("au: {e}"),
+            }
             std::process::exit(1);
         }
     }
