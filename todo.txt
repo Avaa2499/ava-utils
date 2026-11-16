@@ -35,10 +35,6 @@ nvidia api:
    From the reviews. Unverified: what happens if `inflight.txt` or `strikes.txt` is truncated or garbage after a power loss or kill -9.
    Done when: tests cover truncated, empty, binary and half-written files, and the module starts and carries on (bad lines dropped, never locking out valid requests).
 
-4. [3] README: state the minimum systemd version
-   `RestartSteps=` and `RestartMaxDelaySec=` need systemd 254 or newer; only 259 is verified. Add this to the Platform and Fault containment sections.
-   Done when: the README names the minimum.
-
 5. [6] Check a topic's state or a batch bigger than the 16 MiB frame limit is split, not dropped
    From the reviews (gemini, qwen4max). Unverified: the watcher's state-on-subscribe with a very large journal (e.g. the 18gb setting), and any event batch over 16 MiB.
    Done when: tests send a state and a batch over the limit and every entry still arrives, in several frames.

@@ -8,7 +8,7 @@ A growing suite of small, independent Rust modules, optimised around the user's 
 
 - **Language:** Rust.
 - **NO SINGLE POINTS OF FAILURE.** No running ava-utils process that other modules need. systemd and the filesystem are the accepted floor; replace them where it's genuinely better and worth redoing.
-- **Platform:** Linux for now. Other OSes later.
+- **Platform:** Linux for now. Other OSes later. Needs systemd 254 or newer (`RestartSteps=` and `RestartMaxDelaySec=`); only 259 is verified.
 - **Dependencies:** no module depends on another module. External crates and shared library crates are allowed.
 - **Coupling:** no module depends on another module at compile time. At runtime a module reaches another by module name, but the name lives only in the manifest, never in code. Renaming or splitting a module means a find-and-replace across the manifests that name it. No module code changes and nothing is rebuilt.
 - **Communication:** topics (events) and calls (request/response), declared in each module's manifest.
@@ -128,7 +128,7 @@ A crash, hang or bad input in one module never takes down another. A failed oper
 | Double-apply on retry | A retry that reuses its request id (`client::call_retrying`) gets the first reply replayed from a per-module cache (1024 replies, 10 minutes, memory only, successful replies only). After a crash the cache is empty, so operations must also be idempotent |
 | Missed events while down | Producer sends current state when the subscriber reconnects. For `files-changed` the state and every event also carry the watcher's `epoch` (new on every watcher start), a batch counter `seq`, `first_seq` (the oldest batch the journal still holds in full) and the watched `roots`. The indexer saves the position it reached. On connect it rescans the watched roots as a normal job if the epoch changed or the journal no longer reaches back to its position; it skips the rescan when the journal covers the gap. A skipped number in the live stream makes it reconnect. The saved position only moves forward once the rescan finishes |
 
-All directives verified present in systemd 259 on this machine.
+All directives verified present in systemd 259 on this machine. `RestartSteps=` and `RestartMaxDelaySec=` need systemd 254 or newer, so older distributions (e.g. RHEL 9, Ubuntu 22.04) are not supported.
 
 ## Rules for every module
 
