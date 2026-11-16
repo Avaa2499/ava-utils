@@ -49,6 +49,17 @@ Every module follows these. No exceptions, ever.
 - Codecs: `ava-utils-codecs` is a shared crate, not a module. It uses the codec libraries already installed on the system (libavcodec, libdav1d, libvpx, libopus), so the heavy code exists once. Video playback, audio playback and convert-file (e.g. .mkv → .mp4) build it in.
 - Never two modules doing the same thing. This is a design rule, not an install check. Install only checks loops, manifests and tests.
 
+### Measured cost
+
+A `FilesChanged` batch of 50,000 paths (~60 bytes each) encoded with named boxes via `Envelope::encode` (the current approach) vs. a plain array of strings:
+
+| Format | Encode (median) | Decode (median) | Size |
+|---|---|---|---|
+| Named boxes (Envelope) | 6.71 ms | 27.24 ms | 3.19 MiB |
+| Plain array of strings | 6.76 ms | 8.65 ms | 3.19 MiB |
+
+Overhead of named boxes: encode ~0%, decode +215% (~18.6 ms), size +0.0% (74 bytes). Profile: debug (default `cargo test`). Run with `cargo test -p ava-utils-config --test measure -- --ignored --nocapture`.
+
 ## Message ownership
 
 - The rule: every message and topic is defined in `crates/ava-utils-config/src/messages.rs` and has exactly one owning module: the module that answers the call or sends the topic. The standard messages are the exception in form only: every module answers `run-command`, and each module with long jobs answers `job-progress` and `job-cancel`, with the same meaning everywhere. The owner decides what the message means. Other modules only use it. A change to meaning is made by the owner.
