@@ -5,6 +5,7 @@ pub const JOB_PROGRESS: &str = "job-progress";
 pub const JOB_CANCEL: &str = "job-cancel";
 pub const FILES_CHANGED: &str = "files-changed";
 pub const FILE_LOOKUP: &str = "file-lookup";
+pub const SEARCH: &str = "search";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunCommand {
@@ -88,6 +89,22 @@ pub struct FileInfo {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileLookupResult {
+    pub files: Vec<FileInfo>,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Search {
+    pub pattern: String,
+    #[serde(default)]
+    pub under: Option<String>,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchResult {
     pub files: Vec<FileInfo>,
     #[serde(default)]
     pub truncated: bool,
