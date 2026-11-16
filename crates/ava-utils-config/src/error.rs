@@ -17,6 +17,7 @@ pub mod codes {
     pub const BAD_REQUEST: &str = "bad-request";
     pub const NOT_A_CALL: &str = "not-a-call";
     pub const FAILED: &str = "failed";
+    pub const REFUSED: &str = "refused";
 }
 
 impl Error {

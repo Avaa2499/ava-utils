@@ -11,6 +11,10 @@ impl TempDir {
         Self(dir)
     }
 
+    pub fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
     pub fn sock(&self, name: &str) -> PathBuf {
         self.0.join(format!("{name}.sock"))
     }
