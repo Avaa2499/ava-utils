@@ -9,7 +9,7 @@ use ava_utils_config::messages::{
     CommandOutput, FILES_CHANGED, RUN_COMMAND, RunCommand, WATCH_SET_ROOTS, WatchSetRoots,
 };
 use ava_utils_config::paths::Dirs;
-use ava_utils_config::server::{Handler, Listener, Outcome, serve};
+use ava_utils_config::server::{Handler, Outcome, serve_module};
 use ava_utils_file_watcher::batch::pump;
 use ava_utils_file_watcher::limit;
 use ava_utils_file_watcher::service::{Hub, Service};
@@ -78,7 +78,5 @@ fn main() {
             )
         });
     }
-    let listener = Listener::from_systemd().unwrap_or_else(|e| fail(&e));
-    eprintln!("{MODULE}: up, pid {}", std::process::id());
-    serve(listener, Arc::new(Watcher { service, hub }));
+    serve_module(MODULE, Arc::new(Watcher { service, hub })).unwrap_or_else(|e| fail(&e));
 }

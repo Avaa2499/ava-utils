@@ -11,7 +11,7 @@ use ava_utils_config::messages::{
     JobProgress, RUN_COMMAND, RunCommand,
 };
 use ava_utils_config::paths::Dirs;
-use ava_utils_config::server::{Handler, Listener, Outcome, serve};
+use ava_utils_config::server::{Handler, Outcome, serve_module};
 use ava_utils_config::topic::subscribe;
 use ava_utils_file_indexer::service::Service;
 
@@ -111,11 +111,9 @@ fn main() {
         .unwrap_or(4);
     let service =
         Arc::new(Service::open(&state.join("index.redb"), workers).unwrap_or_else(|e| fail(&e)));
-    let listener = Listener::from_systemd().unwrap_or_else(|e| fail(&e));
-    eprintln!("{MODULE}: up, pid {}", std::process::id());
     {
         let (service, dirs) = (service.clone(), dirs.clone());
         thread::spawn(move || follow_producer(service, dirs));
     }
-    serve(listener, Arc::new(Indexer(service)));
+    serve_module(MODULE, Arc::new(Indexer(service))).unwrap_or_else(|e| fail(&e));
 }

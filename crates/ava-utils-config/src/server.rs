@@ -76,6 +76,20 @@ pub fn serve<H: Handler>(listener: Listener, handler: Arc<H>) {
     serve_with(listener, handler, None)
 }
 
+pub fn serve_module<H: Handler>(module: &str, handler: Arc<H>) -> Result<()> {
+    let dirs = crate::paths::Dirs::from_env()?;
+    let guard = Guard::open(&dirs.state(module)?)?;
+    let listener = Listener::from_systemd()?;
+    let watchdog = crate::watchdog::start(&dirs.socket(module)?)?;
+    eprintln!(
+        "{module}: up, pid {}{}",
+        std::process::id(),
+        if watchdog { ", watchdog on" } else { "" }
+    );
+    serve_guarded(listener, handler, guard);
+    Ok(())
+}
+
 pub fn serve_guarded<H: Handler>(listener: Listener, handler: Arc<H>, guard: Arc<Guard>) {
     serve_with(listener, handler, Some(guard))
 }

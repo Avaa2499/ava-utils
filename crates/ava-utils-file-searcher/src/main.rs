@@ -9,7 +9,7 @@ use ava_utils_config::messages::{
     Search,
 };
 use ava_utils_config::paths::Dirs;
-use ava_utils_config::server::{Handler, Listener, Outcome, serve};
+use ava_utils_config::server::{Handler, Outcome, serve_module};
 use ava_utils_file_searcher::service::{run_command, search};
 
 const MODULE: &str = "file-searcher";
@@ -65,7 +65,5 @@ fn main() {
         std::process::exit(1)
     };
     let dirs = Dirs::from_env().unwrap_or_else(|e| fail(&e));
-    let listener = Listener::from_systemd().unwrap_or_else(|e| fail(&e));
-    eprintln!("{MODULE}: up, pid {}", std::process::id());
-    serve(listener, Arc::new(Searcher { dirs }));
+    serve_module(MODULE, Arc::new(Searcher { dirs })).unwrap_or_else(|e| fail(&e));
 }

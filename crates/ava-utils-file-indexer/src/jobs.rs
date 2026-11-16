@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ava_utils_config::error::{Error, Result};
 use ava_utils_config::id::new_job_id;
 use ava_utils_config::messages::{CancelMode, JobState, JobStatus};
+use ava_utils_config::quarantine::MAX_STRIKES;
 use serde::{Deserialize, Serialize};
 
 use crate::apply::GENERATION;
@@ -22,6 +23,8 @@ pub struct JobRecord {
     pub dirs: u64,
     #[serde(default)]
     pub skipped: u64,
+    #[serde(default)]
+    pub crashes: u32,
     #[serde(default)]
     pub error: Option<String>,
     pub updated: u64,
@@ -64,9 +67,22 @@ impl Jobs {
         for (id, _) in index.list_jobs()? {
             let mut rec = load(&index, &id)?;
             if rec.state == JobState::Running {
-                rec.state = JobState::Paused;
-                rec.error = Some("the module stopped while this job was running".into());
+                rec.crashes += 1;
                 rec.updated = now();
+                if rec.crashes >= MAX_STRIKES {
+                    rec.state = JobState::Failed;
+                    rec.error = Some(format!(
+                        "gave up: the module stopped {} times while running this job (start a new scan to retry)",
+                        rec.crashes
+                    ));
+                    index.clear_frontier(&rec.id)?;
+                } else {
+                    rec.state = JobState::Paused;
+                    rec.error = Some(format!(
+                        "the module stopped while this job was running ({} of {MAX_STRIKES} strikes)",
+                        rec.crashes
+                    ));
+                }
                 save(&index, &rec)?;
             }
         }
@@ -109,6 +125,7 @@ impl Jobs {
             entries: 0,
             dirs: 0,
             skipped: 0,
+            crashes: 0,
             error: None,
             updated: now(),
         };
@@ -346,6 +363,7 @@ mod tests {
             entries: 0,
             dirs: 0,
             skipped: 0,
+            crashes: 0,
             error: None,
             updated: 1,
         };
@@ -420,6 +438,86 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    fn crashed_job(ix: &Arc<Index>, crashes: u32) {
+        let rec = JobRecord {
+            id: "c4a5h1".into(),
+            roots: vec!["/x".into()],
+            generation: 1,
+            state: JobState::Running,
+            entries: 0,
+            dirs: 0,
+            skipped: 0,
+            crashes,
+            error: None,
+            updated: 1,
+        };
+        save(ix, &rec).unwrap();
+        ix.commit_scan("c4a5h1", &[], &["/x".to_string()]).unwrap();
+    }
+
+    #[test]
+    fn a_job_that_was_running_at_three_crashes_is_given_up_on_not_resumed_forever() {
+        let (dir, ix) = temp_index("jobs-strikes");
+        let ix = Arc::new(ix);
+        crashed_job(&ix, 0);
+        for expected in [JobState::Paused, JobState::Paused, JobState::Failed] {
+            let jobs = Jobs::new(ix.clone(), 1).unwrap();
+            let s = jobs.status("c4a5h1").unwrap();
+            assert_eq!(s.state, expected);
+            if expected == JobState::Paused {
+                let mut rec = load(&ix, "c4a5h1").unwrap();
+                rec.state = JobState::Running;
+                save(&ix, &rec).unwrap();
+            } else {
+                assert!(s.detail.unwrap().contains("gave up"));
+                assert!(ix.frontier("c4a5h1").unwrap().is_empty());
+                assert!(jobs.resume("c4a5h1").is_err());
+            }
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_strike_count_is_shown_while_a_crashed_job_waits_to_be_resumed() {
+        let (dir, ix) = temp_index("jobs-strike-note");
+        let ix = Arc::new(ix);
+        crashed_job(&ix, 0);
+        let jobs = Jobs::new(ix, 1).unwrap();
+        let d = jobs.status("c4a5h1").unwrap().detail.unwrap();
+        assert!(d.contains("1 of 3 strikes"), "{d}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn job_records_from_before_the_crash_counter_existed_start_at_zero() {
+        #[derive(serde::Serialize)]
+        struct Old {
+            id: String,
+            roots: Vec<String>,
+            generation: u64,
+            state: JobState,
+            entries: u64,
+            dirs: u64,
+            skipped: u64,
+            updated: u64,
+        }
+        let (dir, ix) = temp_index("jobs-old-crashes");
+        let old = Old {
+            id: "01d002".into(),
+            roots: vec![],
+            generation: 1,
+            state: JobState::Paused,
+            entries: 0,
+            dirs: 0,
+            skipped: 0,
+            updated: 1,
+        };
+        ix.save_job("01d002", &rmp_serde::to_vec_named(&old).unwrap())
+            .unwrap();
+        assert_eq!(load(&ix, "01d002").unwrap().crashes, 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn only_one_scan_runs_at_a_time() {
         let (dir, ix) = temp_index("jobs-one");
@@ -449,6 +547,7 @@ mod tests {
             entries: 0,
             dirs: 0,
             skipped: 0,
+            crashes: 0,
             error: None,
             updated: 1,
         };

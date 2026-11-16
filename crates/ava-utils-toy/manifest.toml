@@ -8,3 +8,11 @@ help = "Reply with pong and the process id"
 [[commands]]
 name = "echo"
 help = "Print the arguments back"
+
+[[commands]]
+name = "crash"
+help = "Abort the process (to try crash recovery and quarantine)"
+
+[[commands]]
+name = "quarantine"
+help = "List or clear requests refused after crashing the module: quarantine list | quarantine clear <text|all>"

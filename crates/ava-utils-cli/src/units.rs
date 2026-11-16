@@ -26,6 +26,9 @@ Restart=always
 RestartSec=2s
 RestartSteps=7
 RestartMaxDelaySec=5min
+WatchdogSec=60s
+NotifyAccess=main
+MemoryMax=8G
 ";
 
 pub fn ensure_templates(unit_dir: &Path) -> Result<bool> {

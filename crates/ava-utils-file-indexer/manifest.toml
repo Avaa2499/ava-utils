@@ -28,3 +28,7 @@ help = "Resume a paused job: resume <job>"
 [[commands]]
 name = "exclude"
 help = "Manage exclusion patterns: exclude add|remove|list [pattern]"
+
+[[commands]]
+name = "quarantine"
+help = "List or clear requests refused after crashing the module: quarantine list | quarantine clear <text|all>"

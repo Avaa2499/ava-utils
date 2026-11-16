@@ -17,3 +17,7 @@ help = "List watched folders"
 [[commands]]
 name = "journal"
 help = "Show or set how much recent change history is kept: journal [200k|50mb|18gb]"
+
+[[commands]]
+name = "quarantine"
+help = "List or clear requests refused after crashing the module: quarantine list | quarantine clear <text|all>"
