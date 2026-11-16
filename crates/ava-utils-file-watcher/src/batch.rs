@@ -281,7 +281,14 @@ mod tests {
         for i in 0..50 {
             tx.send(c(&format!("/f{i}"))).unwrap();
         }
-        thread::sleep(Duration::from_millis(400));
+        let t = std::time::Instant::now();
+        while out.lock().unwrap().is_empty() {
+            assert!(
+                t.elapsed() < Duration::from_secs(30),
+                "the burst never flushed"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
         tx.send(r("/gone")).unwrap();
         drop(tx);
         h.join().unwrap();
