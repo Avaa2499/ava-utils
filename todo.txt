@@ -70,5 +70,4 @@ Reviews to delete once their items above are done: chatgptreview (2), copilotrev
 
 Answer on the "> " line. Blank = not accepted. Answered ones move to README.md.
 
-Q1. Nothing starts at login, so after a fresh login the file-watcher is not watching and nothing is indexed until someone runs a command (from the reviews, qwen4max). The indexer now catches up (rescans the watched folders) when it connects, but changes stay unseen until something starts the watcher. Options: keep it as is, or enable only the listening sockets (watcher, indexer) at login.
-> 
+(none open right now)

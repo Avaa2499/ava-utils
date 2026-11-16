@@ -90,7 +90,7 @@ Two different dangers, two different rules. Checked at install time from the man
 - Template units: `ava-utils@.socket` + `ava-utils@.service`, e.g. `ava-utils@video-playback.service`.
 - Connecting to an endpoint starts its module. Nothing starts until something connects.
 - A module that only listens (e.g. the indexer) starts when something calls it, or when you start it by hand. On startup it subscribes to what it listens to, which starts those modules. Events it missed while stopped are covered by the current state each producer sends on connect.
-- Nothing starts at login, and nothing runs while you're logged out.
+- Nothing starts at login, and nothing runs while you're logged out. Decided: this stays until most modules are built and working; then revisit enabling only the listening modules (file-watcher, file-indexer) at login. Until then the watcher does not watch until something starts it, and the indexer catches up with a rescan when it connects.
 - Once started, a module keeps running until you log out or shut down.
 - Verified by a spike (systemd 259): the first connection starts the service; `kill -9` and `abort()` both bring it back within 2s (`Restart=always`); a client that connects while it restarts is queued by the socket and answered by the new process. A client connected at the moment of the crash gets a dropped connection and must retry.
 - A crashed module restarts on its own, without waiting for a new connection. "Nothing starts until something connects" applies to the first start only.
