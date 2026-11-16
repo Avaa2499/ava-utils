@@ -19,10 +19,6 @@ Scoring:
 
 USER IDEAS: none open.
 
-6. [5] Check sccache hits across worktrees
-   From the reviews (qwen4max). Absolute paths in debug info can make parallel worktrees miss the cache.
-   Done when: a second worktree builds mostly from cache, or the build uses `--remap-path-prefix` / lower debuginfo so it does.
-
 8. [2] `au status`: detail beyond `au list`
    From the reviews (qwen4max, gemma, others). `au list` already shows enabled/running per module. Add active jobs, subscriber counts and queue depths, without starting anything that is stopped.
    Done when: `au status` prints one line per installed module with those columns.
@@ -53,7 +49,7 @@ USER IDEAS: none open.
 17. [2] Module: compression
    Likely first user of file-handle passing (item 10). Done when: a file round-trips through compress and decompress.
 
-Reviews to delete once their items above are done: copilotreview (11), geminireview (10), gemma-26ba4breview (8), qwen4maxreview (6, 8, 10).
+Reviews to delete once their items above are done: copilotreview (11), geminireview (10), gemma-26ba4breview (8), qwen4maxreview (8, 10).
 
 
 # Open questions

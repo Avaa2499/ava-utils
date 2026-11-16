@@ -165,7 +165,7 @@ All directives verified present in systemd 259 on this machine. `RestartSteps=` 
 
 - Subagents: free models first, through opencode (`~/.config/opencode/opencode.jsonc`, keys in files outside the repo). Working today: NVIDIA `nvidia/nemotron-3-ultra-550b-a55b` (reliable on whole tasks) and `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` (fast, but stalls on multi-edit tasks); OpenRouter `cohere/north-mini-code:free`. Each free agent works in its own git worktree on a `free/<topic>` branch and pushes only that branch; the lead reviews the diff, runs the full tests and merges to `main`. When the free quota runs out, use Haiku subagents. If something breaks later, revisit it with Sonnet.
 - Linker: mold, set in `~/.cargo/config.toml` (user level, so every worktree and subagent gets it).
-- Compiler cache: sccache (the Rust equivalent of ccache), also user level. Each parallel subagent builds in its own worktree, and sccache shares the compiled dependencies between them.
+- Compiler cache: sccache (the Rust equivalent of ccache), also user level. Measured: a fresh worktree built the whole workspace in 5s with 25 of 33 compiles served from cache; the misses are the workspace's own crates, so no path remapping is needed. Each parallel subagent builds in its own worktree, and sccache shares the compiled dependencies between them.
 - Tasks: a `justfile` with `check`, `test`, `clippy` and `fmt`, added when the Cargo workspace is created.
 
 ## Traps
