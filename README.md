@@ -119,11 +119,11 @@ A crash, hang or bad input in one module never takes down another. A failed oper
 | Failure | Handling |
 |---|---|
 | Crash | Restart forever, never give up: `Restart=always`, `RestartSec=2s`, `RestartSteps=7`, `RestartMaxDelaySec=5min` (≈ doubling, 2s → 5 min). Sockets: `TriggerLimitBurst=0` |
-| Hang | `WatchdogSec=` + the 5s reply cutoff |
-| Bad input | Before handling X, a module writes "working on X" to disk. 3 crashes on the same X → X is refused from then on |
-| Runaway memory | `MemoryMax=` |
+| Hang | `WatchdogSec=60s` + `NotifyAccess=main`. A module pings systemd every 20s, but only after its own `run-command` probe (sent to its own socket) succeeds, so a stuck accept loop or frozen process gets killed and restarted. Plus the 5s reply cutoff. Verified live: a `SIGSTOP`-frozen module was restarted after ~59s |
+| Bad input | Before handling a request, the server writes it to `inflight.txt` in the module's state folder. A request still in flight when the module restarts gets a strike (a panic in its handler also counts); a normal finish resets it, so it means 3 crashes in a row. At 3 the request is refused (`refused` error) until `au <module> quarantine clear <text or all>`; `quarantine list` shows them. Probes, `job-progress` and `job-cancel` are never tracked. A scan job that was running at 3 crashes is given up on (state Failed) |
+| Runaway memory | `MemoryMax=8G` in the template (a scan of ~280k entries peaks near 520 MiB). A module that needs more, e.g. a huge watcher journal, raises it with `systemctl --user edit ava-utils@<module>.service`; `au file-watcher journal` warns when its limit cannot fit |
 | Lost state | Anything needed to resume lives on disk, not only in memory |
-| Double-apply on retry | Request IDs + idempotent operations |
+| Double-apply on retry | A retry that reuses its request id (`client::call_retrying`) gets the first reply replayed from a per-module cache (1024 replies, 10 minutes, memory only, successful replies only). After a crash the cache is empty, so operations must also be idempotent |
 | Missed events while down | Producer sends current state when the subscriber reconnects |
 
 All directives verified present in systemd 259 on this machine.

@@ -102,7 +102,7 @@ impl Guard {
             return Err(Error::Remote {
                 code: codes::REFUSED.into(),
                 message: format!(
-                    "refused: `{label}` crashed this module {n} times (run the module's `quarantine clear` command to allow it again)"
+                    "`{label}` crashed this module {n} times in a row (run the module's `quarantine clear` command to allow it again)"
                 ),
             });
         }
