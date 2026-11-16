@@ -8,6 +8,15 @@ use crate::envelope::Envelope;
 use crate::error::{Error, Result};
 use crate::frame::{read_frame, write_frame};
 
+const JITTER_RANGE: f64 = 0.2;
+
+fn jittered(nominal: Duration, unit: f64) -> Duration {
+    let factor = 1.0 - JITTER_RANGE + 2.0 * JITTER_RANGE * unit;
+    let nanos = nominal.as_nanos() as f64 * factor;
+    let nanos = nanos.max(1.0) as u64;
+    Duration::from_nanos(nanos)
+}
+
 pub const REPLY_DEADLINE: Duration = Duration::from_secs(5);
 
 pub fn call<T: Serialize>(socket: &Path, name: &str, body: &T) -> Result<Envelope> {
@@ -114,12 +123,15 @@ pub fn retry<T>(
     mut sleep: impl FnMut(Duration),
 ) -> Result<T> {
     let mut backoff = Backoff::new();
+    let mut rng_buf = [0u8; 8];
     loop {
         match op() {
             Err(e) if is_down(&e) => {
                 let wait = backoff.next().expect("backoff never ends");
                 on_wait(&wait, &e);
-                sleep(wait.delay);
+                getrandom::fill(&mut rng_buf).expect("getrandom failed");
+                let unit = u64::from_ne_bytes(rng_buf) as f64 / u64::MAX as f64;
+                sleep(jittered(wait.delay, unit));
             }
             other => return other,
         }
@@ -281,10 +293,19 @@ mod tests {
                 }
             },
             |_, _| {},
-            |d| slept.push(d.as_secs()),
+            |d| slept.push(d),
         );
         assert_eq!(r.unwrap(), "up");
-        assert_eq!(slept, [2, 4, 8]);
+        let nominal = [2, 4, 8];
+        for (i, &d) in slept.iter().enumerate() {
+            let n = Duration::from_secs(nominal[i]);
+            let factor = d.as_nanos() as f64 / n.as_nanos() as f64;
+            assert!(
+                (0.8..=1.2).contains(&factor),
+                "attempt {} slept {d:?}, factor {factor}",
+                i + 1
+            );
+        }
     }
 
     #[test]
@@ -303,5 +324,68 @@ mod tests {
         );
         assert!(matches!(r, Err(Error::Remote { .. })));
         assert_eq!(tries, 1);
+    }
+
+    #[test]
+    fn jittered_stays_within_range() {
+        let nominal = Duration::from_millis(100);
+        let cases = [0.0, 0.5, 0.999999];
+        for unit in cases {
+            let d = jittered(nominal, unit);
+            let factor = d.as_nanos() as f64 / nominal.as_nanos() as f64;
+            assert!((0.8..=1.2).contains(&factor), "unit={unit} factor={factor}");
+        }
+        let d0 = jittered(nominal, 0.0);
+        let d1 = jittered(nominal, 0.999999);
+        let f0 = d0.as_nanos() as f64 / nominal.as_nanos() as f64;
+        let f1 = d1.as_nanos() as f64 / nominal.as_nanos() as f64;
+        assert!((f0 - 0.8).abs() < 0.001, "unit=0 factor={f0}");
+        assert!((f1 - 1.2).abs() < 0.01, "unit=~1 factor={f1}");
+    }
+
+    #[test]
+    fn jittered_never_zero() {
+        let d = jittered(Duration::from_millis(1), 0.0);
+        assert_ne!(d, Duration::ZERO);
+    }
+
+    #[test]
+    fn nominal_delays_unchanged() {
+        let waits: Vec<Wait> = Backoff::new().take(9).collect();
+        let secs: Vec<u64> = waits.iter().map(|w| w.delay.as_secs()).collect();
+        assert_eq!(secs, [2, 4, 8, 16, 32, 64, 300, 300, 300]);
+        let hard: Vec<bool> = waits.iter().map(|w| w.hard_error).collect();
+        assert_eq!(
+            hard,
+            [false, false, false, false, false, false, true, true, true]
+        );
+    }
+
+    #[test]
+    fn retry_sleeps_are_jittered() {
+        let mut attempt = 0;
+        let mut slept = Vec::new();
+        let _: Result<()> = retry(
+            || {
+                attempt += 1;
+                if attempt <= 3 {
+                    Err(Error::Unavailable)
+                } else {
+                    Ok(())
+                }
+            },
+            |_, _| {},
+            |d| slept.push(d),
+        );
+        let nominal = [2, 4, 8];
+        for (i, &d) in slept.iter().enumerate() {
+            let n = Duration::from_secs(nominal[i]);
+            let factor = d.as_nanos() as f64 / n.as_nanos() as f64;
+            assert!(
+                (0.8..=1.2).contains(&factor),
+                "attempt {} slept {d:?}, factor {factor}",
+                i + 1
+            );
+        }
     }
 }
