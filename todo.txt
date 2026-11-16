@@ -17,11 +17,29 @@ Scoring:
 
 ----
 
-(nothing queued: add the next module or task here)
+1. [8] Indexer goes stale silently after missed changes
+   From the reviews. If the watcher or indexer is down while files change, nothing reconciles the index; the watcher journal only holds the last N changes.
+   Fix: the watcher topic state carries a generation number and an overflow/gap flag; the indexer detects a gap on (re)subscribe and rescans only the watched roots, as a normal job.
+   Done when: stop the indexer, change files under a watched root, start it, and the index is correct with no manual scan. Test covers journal overflow too.
+
+2. [6] Hung requests count as quarantine strikes, and refusals never expire
+   From the reviews. A request that hangs and gets the module killed by the watchdog gets a strike; three hangs refuse a valid request forever.
+   Fix: record that a restart was caused by the watchdog (not a crash in the request) and do not strike for it; add an expiry (e.g. 24h) to refusals, still clearable by hand.
+   Done when: tests show a watchdog kill adds no strike, and an expired refusal is allowed again.
+
+3. [6] Check the quarantine files survive corruption
+   From the reviews. Unverified: what happens if `inflight.txt` or `strikes.txt` is truncated or garbage after a power loss or kill -9.
+   Done when: tests cover truncated, empty, binary and half-written files, and the module starts and carries on (bad lines dropped, never locking out valid requests).
+
+4. [3] README: state the minimum systemd version
+   `RestartSteps=` and `RestartMaxDelaySec=` need systemd 254 or newer; only 259 is verified. Add this to the Platform and Fault containment sections.
+   Done when: the README names the minimum.
+
 
 
 # Open questions
 
 Answer on the "> " line. Blank = not accepted. Answered ones move to README.md.
 
-(none open right now)
+Q1. The cycle ban and the GUI. A GUI that sets watch roots (call to the watcher) and shows live index changes (event from the indexer) makes gui -> watcher -> indexer -> gui, a three-module loop, which is banned with no exception possible. Options: (A) GUI polls the indexer with calls and never subscribes, (C) ban only loops made entirely of calls, since only those can deadlock, and allow loops containing an event, (F) split the GUI into a view module and a control module. Decide before the GUI is built.
+> 
