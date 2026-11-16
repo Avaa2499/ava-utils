@@ -5,7 +5,7 @@ use ava_utils_config::manifest::load_all;
 
 use crate::complete::{candidates, script};
 use crate::help::help;
-use crate::install::{Layout, Probe, install, remove};
+use crate::install::{Layout, Probe, disable, enable, install, list, remove};
 use crate::loops;
 use crate::run::run_module;
 use crate::systemd::Runner;
@@ -44,6 +44,26 @@ pub fn dispatch(
             let module = module_arg(&args, "remove")?;
             remove(layout, sys, &module)?;
             Ok(format!("removed {module}"))
+        }
+        Some("enable") => {
+            let module = module_arg(&args, "enable")?;
+            enable(layout, sys, &module)?;
+            Ok(format!("enabled {module}"))
+        }
+        Some("disable") => {
+            let module = module_arg(&args, "disable")?;
+            disable(layout, sys, &module)?;
+            Ok(format!(
+                "disabled {module}: stopped, and it stays off until `au enable {module}`"
+            ))
+        }
+        Some("list") => {
+            let mut names: Vec<String> = load_all(&layout.dirs.manifests())?
+                .into_iter()
+                .map(|m| m.module)
+                .collect();
+            names.sort();
+            Ok(list(sys, &names))
         }
         Some("__complete") => {
             let manifests = load_all(&layout.dirs.manifests()).unwrap_or_default();
@@ -166,6 +186,136 @@ mod tests {
         assert!(e.contains("not installed"), "{e}");
         let e = go(&l, &["--raw", "file-indexer"]).unwrap_err().to_string();
         assert!(e.contains("not installed"), "{e}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn put_manifest(l: &Layout, module: &str) {
+        std::fs::write(
+            l.dirs.manifests().join(format!("{module}.toml")),
+            format!("module = \"{module}\"\n"),
+        )
+        .unwrap();
+    }
+
+    fn go_with(l: &Layout, sys: &Recorder, args: &[&str]) -> Result<String> {
+        dispatch(
+            args.iter().map(|s| s.to_string()).collect(),
+            l,
+            sys,
+            &NoProbe,
+            Path::new("/"),
+        )
+    }
+
+    #[test]
+    fn list_with_nothing_installed_says_so() {
+        let (root, l) = layout("list-none");
+        assert_eq!(go(&l, &["list"]).unwrap(), "no modules installed");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn list_prints_one_sorted_line_per_module_with_enabled_and_running_state() {
+        let (root, l) = layout("list");
+        for m in ["zeta", "alpha", "mid"] {
+            put_manifest(&l, m);
+        }
+        let sys = Recorder::default();
+        sys.shows.borrow_mut().extend([
+            "UnitFileState=enabled\nActiveState=active".to_string(),
+            "ActiveState=active".to_string(),
+            "UnitFileState=enabled\nActiveState=active".to_string(),
+            "ActiveState=inactive".to_string(),
+            "UnitFileState=disabled\nActiveState=inactive".to_string(),
+            "ActiveState=inactive".to_string(),
+        ]);
+        let out = go_with(&l, &sys, &["list"]).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert!(
+            lines[0].starts_with("alpha")
+                && lines[0].contains("enabled")
+                && lines[0].contains("running"),
+            "{out}"
+        );
+        assert!(
+            lines[1].starts_with("mid") && lines[1].contains("idle"),
+            "{out}"
+        );
+        assert!(
+            lines[2].starts_with("zeta")
+                && lines[2].contains("disabled")
+                && lines[2].contains("stopped"),
+            "{out}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn list_marks_a_failed_service() {
+        let (root, l) = layout("list-failed");
+        put_manifest(&l, "bad");
+        let sys = Recorder::default();
+        sys.shows.borrow_mut().extend([
+            "UnitFileState=enabled\nActiveState=active".to_string(),
+            "ActiveState=failed".to_string(),
+        ]);
+        assert!(go_with(&l, &sys, &["list"]).unwrap().contains("failed"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn disable_stops_and_disables_an_installed_module() {
+        let (root, l) = layout("disable");
+        put_manifest(&l, "x");
+        let sys = Recorder::default();
+        let out = go_with(&l, &sys, &["disable", "x"]).unwrap();
+        assert!(out.contains("au enable x"), "{out}");
+        let calls = sys.calls.borrow();
+        assert!(calls[0].contains("disable --now ava-utils@x.socket"));
+        assert!(calls[1].contains("stop ava-utils@x.service"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn enable_starts_the_socket_of_an_installed_module() {
+        let (root, l) = layout("enable");
+        put_manifest(&l, "x");
+        let sys = Recorder::default();
+        assert_eq!(go_with(&l, &sys, &["enable", "x"]).unwrap(), "enabled x");
+        assert_eq!(
+            sys.calls.borrow()[0],
+            "systemctl --user enable --now ava-utils@x.socket"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn enable_and_disable_refuse_a_module_that_is_not_installed_and_touch_nothing() {
+        let (root, l) = layout("enable-missing");
+        let sys = Recorder::default();
+        for verb in ["enable", "disable"] {
+            let e = go_with(&l, &sys, &[verb, "ghost"]).unwrap_err().to_string();
+            assert!(e.contains("not installed"), "{e}");
+        }
+        assert!(sys.calls.borrow().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn enable_and_disable_need_a_module_name_and_reject_path_tricks() {
+        let (root, l) = layout("enable-usage");
+        let sys = Recorder::default();
+        for verb in ["enable", "disable"] {
+            assert!(
+                go_with(&l, &sys, &[verb])
+                    .unwrap_err()
+                    .to_string()
+                    .contains("usage")
+            );
+            assert!(go_with(&l, &sys, &[verb, "../x"]).is_err());
+        }
+        assert!(sys.calls.borrow().is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 }

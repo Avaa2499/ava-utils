@@ -123,6 +123,7 @@ Two different dangers, two different rules. Checked at install time from the man
 
 - Installed with `just install` (builds it, copies it to `~/.local/bin/au` and writes the bash completion to `~/.local/share/bash-completion/completions/au`; `au install` cannot install itself). Re-run after changing the CLI.
 - One command for everything: install, remove, cycle check, and using modules as `au <module-suffix> <arguments>`.
+- `au list` shows every installed module: enabled or disabled, and running, idle (starts on first call), failed or stopped. `au disable <module>` pauses a module: it stops it and its socket, so callers get `Unavailable`, and it stays off, across logins too, until `au enable <module>`. `au enable <module>` starts its socket again. Both refuse a module that is not installed.
 - It exits when done, so nothing depends on it running.
 - Reading command-line flags lives in `ava-utils-config`, not in a module.
 - Every module answers `run-command` with no arguments by replying with a short "I'm up" text. Install uses this to start the module for the crash test.
@@ -162,7 +163,7 @@ All directives verified present in systemd 259 on this machine. `RestartSteps=` 
 
 ## Build and workflow
 
-- Subagents use Haiku by default. If something breaks later, revisit it with Sonnet.
+- Subagents: free models first, through opencode (`~/.config/opencode/opencode.jsonc`, keys in files outside the repo). Working today: NVIDIA `nvidia/nemotron-3-ultra-550b-a55b` (reliable on whole tasks) and `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` (fast, but stalls on multi-edit tasks); OpenRouter `cohere/north-mini-code:free`. Each free agent works in its own git worktree on a `free/<topic>` branch and pushes only that branch; the lead reviews the diff, runs the full tests and merges to `main`. When the free quota runs out, use Haiku subagents. If something breaks later, revisit it with Sonnet.
 - Linker: mold, set in `~/.cargo/config.toml` (user level, so every worktree and subagent gets it).
 - Compiler cache: sccache (the Rust equivalent of ccache), also user level. Each parallel subagent builds in its own worktree, and sccache shares the compiled dependencies between them.
 - Tasks: a `justfile` with `check`, `test`, `clippy` and `fmt`, added when the Cargo workspace is created.
@@ -212,20 +213,3 @@ Decisions behind it:
 - The file-indexer applies exclusion rules to what the file-watcher reports, so the file-watcher watches everything under its roots.
 - No `index-changed` topic yet: nothing listens to it. Add it when something does.
 - `run-command`, `job-progress` and `job-cancel` are the standard messages every module answers (accepted names). The CLI picks the module by name, so they never clash.
-
-
-TODO MODULES:
-
-gui
-audio playback
-video playback
-compression
-file indexing
-file watcher
-file searcher
-convert file
-
-SHARED CRATES (code built into modules, never run on their own):
-
-ava-utils-config
-ava-utils-codecs

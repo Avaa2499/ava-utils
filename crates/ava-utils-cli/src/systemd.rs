@@ -63,6 +63,49 @@ pub fn main_pid(r: &impl Runner, module: &str) -> Result<u32> {
         .map_err(|_| Error::Usage(format!("unexpected MainPID: {out:?}")))
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct ModuleState {
+    pub enabled: bool,
+    pub socket_active: bool,
+    pub service: String,
+}
+
+fn property(out: &str, key: &str) -> String {
+    out.lines()
+        .find_map(|l| l.strip_prefix(key).and_then(|r| r.strip_prefix('=')))
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+pub fn module_state(r: &impl Runner, module: &str) -> Result<ModuleState> {
+    let socket = r.run(
+        "systemctl",
+        &user(&[
+            "show",
+            "-p",
+            "UnitFileState",
+            "-p",
+            "ActiveState",
+            &format!("ava-utils@{module}.socket"),
+        ]),
+    )?;
+    let service = r.run(
+        "systemctl",
+        &user(&[
+            "show",
+            "-p",
+            "ActiveState",
+            &format!("ava-utils@{module}.service"),
+        ]),
+    )?;
+    Ok(ModuleState {
+        enabled: property(&socket, "UnitFileState") == "enabled",
+        socket_active: property(&socket, "ActiveState") == "active",
+        service: property(&service, "ActiveState"),
+    })
+}
+
 pub fn kill9(r: &impl Runner, pid: u32) -> Result<()> {
     r.run("kill", &["-9".to_string(), pid.to_string()])
         .map(|_| ())
@@ -77,6 +120,7 @@ pub mod fake {
     pub struct Recorder {
         pub calls: RefCell<Vec<String>>,
         pub pids: RefCell<Vec<String>>,
+        pub shows: RefCell<Vec<String>>,
     }
 
     impl Runner for Recorder {
@@ -91,6 +135,12 @@ pub mod fake {
                 } else {
                     p.remove(0)
                 });
+            }
+            if args.iter().any(|a| a == "show") {
+                let mut p = self.shows.borrow_mut();
+                if !p.is_empty() {
+                    return Ok(p.remove(0));
+                }
             }
             Ok(String::new())
         }
@@ -126,6 +176,32 @@ mod tests {
         let r = Recorder::default();
         r.pids.borrow_mut().push("4242".into());
         assert_eq!(main_pid(&r, "x").unwrap(), 4242);
+    }
+
+    #[test]
+    fn module_state_reads_the_socket_and_service_units() {
+        let r = Recorder::default();
+        r.shows.borrow_mut().extend([
+            "ActiveState=active\nUnitFileState=enabled".into(),
+            "ActiveState=inactive".into(),
+        ]);
+        assert_eq!(
+            module_state(&r, "x").unwrap(),
+            ModuleState {
+                enabled: true,
+                socket_active: true,
+                service: "inactive".into()
+            }
+        );
+        assert!(r.calls.borrow()[0].contains("ava-utils@x.socket"));
+        assert!(r.calls.borrow()[1].contains("ava-utils@x.service"));
+    }
+
+    #[test]
+    fn a_unit_that_systemd_does_not_know_reads_as_disabled_and_stopped() {
+        let r = Recorder::default();
+        let s = module_state(&r, "x").unwrap();
+        assert!(!s.enabled && !s.socket_active && s.service.is_empty());
     }
 
     #[test]

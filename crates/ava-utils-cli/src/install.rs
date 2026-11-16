@@ -11,7 +11,16 @@ use crate::loops;
 use crate::systemd::{self, Runner};
 use crate::units;
 
-pub const RESERVED: [&str; 5] = ["install", "remove", "check", "help", "completions"];
+pub const RESERVED: [&str; 8] = [
+    "install",
+    "remove",
+    "check",
+    "help",
+    "completions",
+    "list",
+    "enable",
+    "disable",
+];
 
 pub const CRASH_RECOVERY_LIMIT: Duration = Duration::from_secs(15);
 
@@ -210,6 +219,52 @@ fn crash_test(
 
 fn pids(sys: &impl Runner, modules: &[String]) -> Result<Vec<u32>> {
     modules.iter().map(|m| systemd::main_pid(sys, m)).collect()
+}
+
+fn installed(layout: &Layout, module: &str) -> Result<()> {
+    check_module_name(module)?;
+    if layout.manifest(module).exists() {
+        Ok(())
+    } else {
+        Err(Error::Usage(format!("{module} is not installed")))
+    }
+}
+
+pub fn enable(layout: &Layout, sys: &impl Runner, module: &str) -> Result<()> {
+    installed(layout, module)?;
+    systemd::enable_now(sys, module)
+}
+
+pub fn disable(layout: &Layout, sys: &impl Runner, module: &str) -> Result<()> {
+    installed(layout, module)?;
+    systemd::disable_now(sys, module)
+}
+
+pub fn list(sys: &impl Runner, modules: &[String]) -> String {
+    if modules.is_empty() {
+        return "no modules installed".to_string();
+    }
+    let width = modules.iter().map(String::len).max().unwrap_or(0);
+    modules
+        .iter()
+        .map(|m| {
+            let (enabled, status) = match systemd::module_state(sys, m) {
+                Ok(s) => {
+                    let status = match s.service.as_str() {
+                        "active" => "running",
+                        "activating" | "reloading" => "starting",
+                        "failed" => "failed",
+                        _ if s.socket_active => "idle (starts on first call)",
+                        _ => "stopped",
+                    };
+                    (if s.enabled { "enabled" } else { "disabled" }, status)
+                }
+                Err(_) => ("unknown", "systemd did not answer"),
+            };
+            format!("{m:<width$}  {enabled:<8}  {status}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn remove(layout: &Layout, sys: &impl Runner, module: &str) -> Result<()> {

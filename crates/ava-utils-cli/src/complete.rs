@@ -1,7 +1,16 @@
 use ava_utils_config::error::{Error, Result};
 use ava_utils_config::manifest::Manifest;
 
-pub const BUILTINS: [&str; 5] = ["install", "remove", "check", "help", "completions"];
+pub const BUILTINS: [&str; 8] = [
+    "install",
+    "remove",
+    "check",
+    "help",
+    "completions",
+    "list",
+    "enable",
+    "disable",
+];
 
 pub const BASH_SCRIPT: &str = "_au() {
     local IFS=$'\\n'
@@ -46,7 +55,7 @@ pub fn candidates(words: &[String], manifests: &[Manifest], workspace: &[String]
         }
         [verb] => match verb.as_str() {
             "install" if !raw => starting_with(current, workspace.to_vec()),
-            "remove" | "help" if !raw => starting_with(current, installed),
+            "remove" | "help" | "enable" | "disable" if !raw => starting_with(current, installed),
             "completions" if !raw => starting_with(current, vec!["bash".to_string()]),
             module => manifests
                 .iter()
@@ -97,10 +106,13 @@ mod tests {
                 "--raw",
                 "check",
                 "completions",
+                "disable",
+                "enable",
                 "file-indexer",
                 "file-watcher",
                 "help",
                 "install",
+                "list",
                 "remove",
                 "web-searcher"
             ]

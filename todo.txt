@@ -17,23 +17,15 @@ Scoring:
 
 ----
 
-USER ADDED, WANTS THESE DONE FIRST:
-review over everything in /reviews/ and add everything to this file if needed. delete each review when its been written here and action has been taken against it.
-set up nvidia and openrouter free ai models. some are incredibly good, and it allows for more ai models (subagents) to work at the same time, speeding up development.
-https://openrouter.ai/models?variant=free
-/home/ava/OPENROUTERAPI.txt
-add in the command au list, to list the status of all modules (installed, enabled/disabled)
-add in the command au disable/enable, to pause a module (user must re-enable with au enable)
-nvidia api:
-(key is in /home/ava/NVIDIAAPI.txt, outside this repo; it expires 05/16/2027)
+USER IDEAS: none open.
 
 6. [5] Check sccache hits across worktrees
    From the reviews (qwen4max). Absolute paths in debug info can make parallel worktrees miss the cache.
    Done when: a second worktree builds mostly from cache, or the build uses `--remap-path-prefix` / lower debuginfo so it does.
 
-8. [2] `au status`
-   From the reviews (qwen4max, gemma, others). Show which modules are running, their active jobs, subscriber counts and queue depths, without starting anything that is stopped.
-   Done when: `au status` prints one line per installed module.
+8. [2] `au status`: detail beyond `au list`
+   From the reviews (qwen4max, gemma, others). `au list` already shows enabled/running per module. Add active jobs, subscriber counts and queue depths, without starting anything that is stopped.
+   Done when: `au status` prints one line per installed module with those columns.
 
 10. [2] Pass file handles over sockets (SCM_RIGHTS)
    From the reviews (gemini, qwen4max). Stops a file being deleted or moved while another module reads it. The README defers this until a module first needs it; compression is the likely first.
@@ -43,7 +35,25 @@ nvidia api:
    From the reviews (copilot, random). The format is frozen, so this is only a measurement.
    Done when: the README records bytes and time per message for a 50,000-path batch.
 
-Reviews to delete once their items above are done: copilotreview (7, 11), geminireview (10), gemma-26ba4breview (8), qwen4maxreview (6, 8, 10).
+12. [2] Module: gui (status bar and live updates)
+   Needs an `index-changed` topic from the indexer, and `loop_partners` naming in the gui, file-watcher and file-indexer manifests (see Cycles in the README). Done when: a window shows live indexer state with no polling.
+
+13. [2] Shared crate: ava-utils-codecs
+   Uses the system libavcodec, libdav1d, libvpx and libopus. Needed before the three media modules below. Done when: a test decodes one audio and one video sample.
+
+14. [2] Module: audio-playback
+   Done when: `au audio-playback play <file>` plays a file. Needs 13.
+
+15. [2] Module: video-playback
+   Decode and audio output stay in one module (README trap 4). Done when: `au video-playback play <file>` plays a file. Needs 13.
+
+16. [2] Module: convert-file
+   Example: .mkv to .mp4. A long job with progress and cancel. Needs 13.
+
+17. [2] Module: compression
+   Likely first user of file-handle passing (item 10). Done when: a file round-trips through compress and decompress.
+
+Reviews to delete once their items above are done: copilotreview (11), geminireview (10), gemma-26ba4breview (8), qwen4maxreview (6, 8, 10).
 
 
 # Open questions
