@@ -2,7 +2,7 @@
 
 A growing suite of small, independent Rust modules, optimised around the user's Linux machine. Each module does one bounded job and publishes its own inputs and outputs. Modules work together through shared topics and calls, never through direct dependencies. New things get their own module, never tacked onto an existing one. The suite is designed to grow indefinitely.
 
-**Status:** building. `ava-utils-config`, the `au` CLI, `ava-utils-file-indexer`, `ava-utils-file-searcher` and `ava-utils-file-watcher` are done. The message format is frozen. Next: install `au` onto PATH.
+**Status:** building. `ava-utils-config`, the `au` CLI, `ava-utils-file-indexer`, `ava-utils-file-searcher` and `ava-utils-file-watcher` are done. The message format is frozen, the hardening items are built, and `au` is on PATH. Nothing queued in `todo.txt`.
 
 ## Locked decisions
 
@@ -104,6 +104,7 @@ Frozen once three modules worked together. The exact wire bytes of every message
 
 ## The `au` CLI
 
+- Installed with `just install` (builds it and copies it to `~/.local/bin/au`; `au install` cannot install itself). Re-run after changing the CLI.
 - One command for everything: install, remove, cycle check, and using modules as `au <module-suffix> <arguments>`.
 - It exits when done, so nothing depends on it running.
 - Reading command-line flags lives in `ava-utils-config`, not in a module.
