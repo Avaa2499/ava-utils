@@ -432,7 +432,7 @@ mod tests {
     fn a_safe_cancel_saves_where_it_was_and_resume_finishes_with_no_lost_work() {
         let (dir, ix) = temp_index("scan-safe");
         let ix = Arc::new(ix);
-        let root = build_tree("scan-safe", 4, 3);
+        let root = build_tree("scan-safe", 4, 4);
         let r = s(&root);
         let ctl = ScanControl::slow(Duration::from_millis(3));
         let canceller = {
@@ -459,7 +459,7 @@ mod tests {
         let saved = ix.frontier("job").unwrap();
         assert!(!saved.is_empty());
         let partial = ix.count().unwrap();
-        assert!(partial < expected_entries(4, 3));
+        assert!(partial < expected_entries(4, 4));
         let end = run_scan(
             &ix,
             "job",
@@ -471,7 +471,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(end, ScanEnd::Completed);
-        assert_eq!(ix.count().unwrap(), expected_entries(4, 3));
+        assert_eq!(ix.count().unwrap(), expected_entries(4, 4));
         let _ = std::fs::remove_dir_all(dir);
         let _ = std::fs::remove_dir_all(root);
     }
@@ -480,7 +480,7 @@ mod tests {
     fn the_saved_frontier_never_lists_folders_that_were_already_committed() {
         let (dir, ix) = temp_index("scan-frontier");
         let ix = Arc::new(ix);
-        let root = build_tree("scan-frontier", 4, 3);
+        let root = build_tree("scan-frontier", 4, 4);
         let r = s(&root);
         let ctl = Arc::new(ScanControl {
             cancel: AtomicU8::new(RUN),
@@ -529,7 +529,7 @@ mod tests {
     fn a_force_cancel_stops_without_finishing_and_clears_the_frontier() {
         let (dir, ix) = temp_index("scan-force");
         let ix = Arc::new(ix);
-        let root = build_tree("scan-force", 4, 3);
+        let root = build_tree("scan-force", 4, 4);
         let r = s(&root);
         let ctl = ScanControl::slow(Duration::from_millis(3));
         let canceller = {
@@ -556,7 +556,7 @@ mod tests {
         assert_eq!(end, ScanEnd::Cancelled);
         assert!(t.elapsed() < Duration::from_secs(2));
         assert!(ix.frontier("job").unwrap().is_empty());
-        assert!(ix.count().unwrap() < expected_entries(4, 3));
+        assert!(ix.count().unwrap() < expected_entries(4, 4));
         let _ = std::fs::remove_dir_all(dir);
         let _ = std::fs::remove_dir_all(root);
     }
