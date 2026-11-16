@@ -6,6 +6,7 @@ pub const JOB_CANCEL: &str = "job-cancel";
 pub const FILES_CHANGED: &str = "files-changed";
 pub const FILE_LOOKUP: &str = "file-lookup";
 pub const SEARCH: &str = "search";
+pub const WATCH_SET_ROOTS: &str = "watch-set-roots";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunCommand {
@@ -92,6 +93,11 @@ pub struct FileLookupResult {
     pub files: Vec<FileInfo>,
     #[serde(default)]
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WatchSetRoots {
+    pub roots: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
