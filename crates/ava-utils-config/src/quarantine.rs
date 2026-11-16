@@ -53,10 +53,32 @@ fn render(t: &Table) -> String {
 }
 
 fn read(path: &Path) -> Result<Table> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => Ok(parse(&text)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Table::new()),
-        Err(e) => Err(e.into()),
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Table::new()),
+        Err(e) => return Err(e.into()),
+    };
+    if bytes.is_empty() {
+        return Ok(Table::new());
+    }
+    let has_trailing_newline = bytes.ends_with(b"\n");
+    let text = String::from_utf8_lossy(&bytes);
+    let mut table = parse(&text);
+    if !has_trailing_newline {
+        drop_last_line(&mut table, &text);
+    }
+    Ok(table)
+}
+
+fn drop_last_line(table: &mut Table, text: &str) {
+    let last_line_start = text.rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let last_line = &text[last_line_start..];
+    let mut parts = last_line.splitn(3, '\t');
+    if let (Some(k), Some(n), Some(_)) = (parts.next(), parts.next(), parts.next())
+        && !k.is_empty()
+        && n.parse::<u32>().is_ok()
+    {
+        table.remove(k);
     }
 }
 
@@ -321,5 +343,172 @@ mod tests {
         std::fs::write(d.path().join("inflight.txt"), "\u{0}\u{1}\n").unwrap();
         let g = Guard::open(d.path()).unwrap();
         assert_eq!(g.strikes(), [("work".to_string(), 2)]);
+    }
+
+    // --- Corruption robustness tests ---
+
+    #[test]
+    fn empty_files_are_ok() {
+        let d = TempDir::new();
+        std::fs::write(d.path().join("strikes.txt"), "").unwrap();
+        std::fs::write(d.path().join("inflight.txt"), "").unwrap();
+        let g = Guard::open(d.path()).unwrap();
+        assert!(g.strikes().is_empty());
+        assert!(g.begin("new", "fresh").is_ok());
+        drop(g.begin("new", "fresh").unwrap());
+        assert!(Guard::open(d.path()).unwrap().strikes().is_empty());
+    }
+
+    #[test]
+    fn strikes_truncated_mid_line_is_ignored() {
+        let d = TempDir::new();
+        std::fs::write(d.path().join("strikes.txt"), "good\t1\twork\ntrunc").unwrap();
+        std::fs::write(d.path().join("inflight.txt"), "").unwrap();
+        let g = Guard::open(d.path()).unwrap();
+        assert_eq!(g.strikes(), [("work".to_string(), 1)]);
+        assert!(g.begin("new", "fresh").is_ok());
+    }
+
+    #[test]
+    fn inflight_truncated_mid_line_keeps_good_line() {
+        let d = TempDir::new();
+        std::fs::write(d.path().join("strikes.txt"), "").unwrap();
+        std::fs::write(d.path().join("inflight.txt"), "key\t1\tlabel\ntrunc").unwrap();
+        let g = Guard::open(d.path()).unwrap();
+        assert_eq!(g.strikes(), [("label".to_string(), 1)]);
+        assert!(g.begin("new", "fresh").is_ok());
+    }
+
+    #[test]
+    fn strikes_binary_bytes_are_ignored() {
+        let d = TempDir::new();
+        std::fs::write(
+            d.path().join("strikes.txt"),
+            b"good\t1\twork\n\xff\xfe\x00\x01bad",
+        )
+        .unwrap();
+        std::fs::write(d.path().join("inflight.txt"), "").unwrap();
+        let g = Guard::open(d.path()).unwrap();
+        assert_eq!(g.strikes(), [("work".to_string(), 1)]);
+        assert!(g.begin("new", "fresh").is_ok());
+    }
+
+    #[test]
+    fn inflight_binary_bytes_keeps_good_line() {
+        let d = TempDir::new();
+        std::fs::write(d.path().join("strikes.txt"), "").unwrap();
+        std::fs::write(
+            d.path().join("inflight.txt"),
+            b"key\t1\tlabel\n\xff\xfe\x00\x01",
+        )
+        .unwrap();
+        let g = Guard::open(d.path()).unwrap();
+        assert_eq!(g.strikes(), [("label".to_string(), 1)]);
+        assert!(g.begin("new", "fresh").is_ok());
+    }
+
+    #[test]
+    fn strikes_invalid_utf8_is_handled() {
+        let d = TempDir::new();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"good\t1\twork\n");
+        bytes.extend_from_slice(&[0x80, 0x81, 0x82]); // invalid UTF-8
+        std::fs::write(d.path().join("strikes.txt"), bytes).unwrap();
+        std::fs::write(d.path().join("inflight.txt"), "").unwrap();
+        let g = Guard::open(d.path()).unwrap();
+        assert_eq!(g.strikes(), [("work".to_string(), 1)]);
+        assert!(g.begin("new", "fresh").is_ok());
+    }
+
+    #[test]
+    fn inflight_invalid_utf8_keeps_good_line() {
+        let d = TempDir::new();
+        std::fs::write(d.path().join("strikes.txt"), "").unwrap();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"key\t1\tlabel\n");
+        bytes.extend_from_slice(&[0x80, 0x81, 0x82]);
+        std::fs::write(d.path().join("inflight.txt"), bytes).unwrap();
+        let g = Guard::open(d.path()).unwrap();
+        assert_eq!(g.strikes(), [("label".to_string(), 1)]);
+        assert!(g.begin("new", "fresh").is_ok());
+    }
+
+    #[test]
+    fn strikes_good_line_then_garbage_keeps_good() {
+        let d = TempDir::new();
+        std::fs::write(
+            d.path().join("strikes.txt"),
+            "good\t1\twork\ngarbage\nmore\tnotanumber\tbad\n",
+        )
+        .unwrap();
+        std::fs::write(d.path().join("inflight.txt"), "").unwrap();
+        let g = Guard::open(d.path()).unwrap();
+        assert_eq!(g.strikes(), [("work".to_string(), 1)]);
+        assert!(g.begin("new", "fresh").is_ok());
+    }
+
+    #[test]
+    fn inflight_good_line_then_garbage_keeps_good() {
+        let d = TempDir::new();
+        std::fs::write(d.path().join("strikes.txt"), "").unwrap();
+        std::fs::write(
+            d.path().join("inflight.txt"),
+            "key\t1\tlabel\ngarbage\nmore\tnotanumber\tbad\n",
+        )
+        .unwrap();
+        let g = Guard::open(d.path()).unwrap();
+        assert_eq!(g.strikes(), [("label".to_string(), 1)]);
+        assert!(g.begin("new", "fresh").is_ok());
+    }
+
+    #[test]
+    fn strikes_garbage_then_good_line_keeps_good() {
+        let d = TempDir::new();
+        std::fs::write(
+            d.path().join("strikes.txt"),
+            "garbage\nmore\tnotanumber\tbad\ngood\t1\twork\n",
+        )
+        .unwrap();
+        std::fs::write(d.path().join("inflight.txt"), "").unwrap();
+        let g = Guard::open(d.path()).unwrap();
+        assert_eq!(g.strikes(), [("work".to_string(), 1)]);
+        assert!(g.begin("new", "fresh").is_ok());
+    }
+
+    #[test]
+    fn inflight_garbage_then_good_line_keeps_good() {
+        let d = TempDir::new();
+        std::fs::write(d.path().join("strikes.txt"), "").unwrap();
+        std::fs::write(
+            d.path().join("inflight.txt"),
+            "garbage\nmore\tnotanumber\tbad\nkey\t1\tlabel\n",
+        )
+        .unwrap();
+        let g = Guard::open(d.path()).unwrap();
+        assert_eq!(g.strikes(), [("label".to_string(), 1)]);
+        assert!(g.begin("new", "fresh").is_ok());
+    }
+
+    #[test]
+    fn after_corrupt_open_begin_finish_clear_still_work() {
+        let d = TempDir::new();
+        let mut strikes = Vec::new();
+        strikes.extend_from_slice(b"bad\ngood\t1\twork\n");
+        strikes.extend_from_slice(&[0xff, 0xfe]);
+        std::fs::write(d.path().join("strikes.txt"), strikes).unwrap();
+        std::fs::write(d.path().join("inflight.txt"), "trunc").unwrap();
+        let g = Guard::open(d.path()).unwrap();
+        assert_eq!(g.strikes(), [("work".to_string(), 1)]);
+
+        let t = g.begin("new", "fresh").unwrap();
+        drop(t);
+        assert_eq!(g.strikes(), [("work".to_string(), 1)]); // original strike remains
+
+        let t2 = g.begin("another", "more").unwrap();
+        drop(t2);
+        assert_eq!(g.strikes(), [("work".to_string(), 1)]);
+
+        g.clear("all").unwrap();
+        assert!(Guard::open(d.path()).unwrap().strikes().is_empty());
     }
 }
